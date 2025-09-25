@@ -14,7 +14,7 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Dict, List, Sequence, Optional, Tuple
+from typing import Dict, List, Optional, Sequence
 
 
 SCRIPT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -84,6 +84,23 @@ def init_colors() -> None:
     except curses.error:
         pass
 
+    # Try to detect if we have extended colors (256 color mode)
+    # If so, we can use a proper gray color
+    border_color = curses.COLOR_WHITE  # Fallback
+    if curses.COLORS >= 256:
+        # Use color 240 (gray) if available in 256-color mode
+        try:
+            curses.init_pair(13, 240, -1)  # Gray foreground
+            border_pair = 13
+        except curses.error:
+            # Fallback to dimmed white
+            border_pair = 7
+            border_color = curses.COLOR_WHITE
+    else:
+        # Standard 8-color mode - use dimmed white
+        border_pair = 7
+        border_color = curses.COLOR_WHITE
+
     # Modern color scheme with better contrast and visual hierarchy
     pairs = [
         (1, curses.COLOR_WHITE, curses.COLOR_BLUE),    # Header
@@ -92,7 +109,7 @@ def init_colors() -> None:
         (4, curses.COLOR_BLACK, curses.COLOR_CYAN),     # Selected label
         (5, curses.COLOR_BLACK, curses.COLOR_YELLOW),   # Selected value
         (6, curses.COLOR_YELLOW, -1),                   # Status/commands
-        (7, curses.COLOR_BLUE, -1),                     # Borders
+        (7, border_color, -1),                          # Borders (subtle gray or dimmed white)
         (8, curses.COLOR_MAGENTA, -1),                  # Section headers
         (9, curses.COLOR_GREEN, -1),                    # Success
         (10, curses.COLOR_RED, -1),                     # Error
@@ -106,6 +123,14 @@ def init_colors() -> None:
         except curses.error:
             continue
 
+    # Set up border color with appropriate dimming
+    if curses.COLORS >= 256 and border_pair == 13:
+        # Use the gray color without dimming (it's already subtle)
+        border_attr = curses.color_pair(13)
+    else:
+        # Use dimmed white as fallback
+        border_attr = curses.color_pair(7) | curses.A_DIM
+
     COLORS.update(
         {
             "header": curses.color_pair(12) | curses.A_BOLD,
@@ -115,7 +140,7 @@ def init_colors() -> None:
             "selected_value": curses.color_pair(5) | curses.A_BOLD,
             "status": curses.color_pair(6),
             "command": curses.color_pair(6),
-            "border": curses.color_pair(7),
+            "border": border_attr,  # Adaptive gray/dimmed white
             "title": curses.color_pair(2) | curses.A_BOLD,  # Cyan for modern look
             "section": curses.color_pair(8) | curses.A_BOLD,
             "success": curses.color_pair(9) | curses.A_BOLD,
@@ -190,10 +215,10 @@ class Field:
         label_text = f"{indicator} {icon} {self.label:<{FIELD_LABEL_WIDTH}}"
         value_text = self.display_value() or "─"
 
-        safe_addstr(stdscr, row, 2, label_text, label_attr)
-        safe_addstr(stdscr, row, 6 + FIELD_LABEL_WIDTH, value_text, value_attr)
+        safe_addstr(stdscr, row, 3, label_text, label_attr)
+        safe_addstr(stdscr, row, 7 + FIELD_LABEL_WIDTH, value_text, value_attr)
 
-    def handle_input(self, stdscr: curses.window) -> None:
+    def handle_input(self, _stdscr: curses.window) -> None:
         raise NotImplementedError
 
 
@@ -240,7 +265,7 @@ class ChoiceField(Field):
     def value(self) -> str:
         return self.choices[self.index]
 
-    def handle_input(self, stdscr: curses.window) -> None:  # noqa: ARG002
+    def handle_input(self, _stdscr: curses.window) -> None:
         self.index = (self.index + 1) % len(self.choices)
 
     def display_value(self) -> str:
@@ -252,7 +277,7 @@ class ToggleField(Field):
         super().__init__(label)
         self.value = value
 
-    def handle_input(self, stdscr: curses.window) -> None:  # noqa: ARG002
+    def handle_input(self, _stdscr: curses.window) -> None:
         self.value = not self.value
 
     def display_value(self) -> str:
@@ -270,6 +295,33 @@ class ActionRegion:
 
     def contains_click(self, row: int, col: int) -> bool:
         return self.row == row and self.col_start <= col <= self.col_end
+
+
+@dataclass
+class ScrollablePanel:
+    """Manages scrollable content within a panel."""
+    content_height: int = 0
+    visible_height: int = 0
+    scroll_offset: int = 0
+
+    def can_scroll_up(self) -> bool:
+        return self.scroll_offset > 0
+
+    def can_scroll_down(self) -> bool:
+        return self.scroll_offset < max(0, self.content_height - self.visible_height)
+
+    def scroll_up(self, lines: int = 1) -> None:
+        self.scroll_offset = max(0, self.scroll_offset - lines)
+
+    def scroll_down(self, lines: int = 1) -> None:
+        max_scroll = max(0, self.content_height - self.visible_height)
+        self.scroll_offset = min(max_scroll, self.scroll_offset + lines)
+
+    def get_visible_range(self) -> tuple[int, int]:
+        """Returns (start_line, end_line) for visible content."""
+        start = self.scroll_offset
+        end = min(start + self.visible_height, self.content_height)
+        return start, end
 
 
 @dataclass
@@ -529,10 +581,10 @@ def draw_box(stdscr: curses.window, y: int, x: int, height: int, width: int, tit
         safe_addstr(stdscr, y, x + 1, BOX_CHARS["h"] * (width - 2), COLORS["border"])
         safe_addstr(stdscr, y, x + width - 1, BOX_CHARS["tr"], COLORS["border"])
 
-        # Title if provided
+        # Title if provided (left-aligned)
         if title:
             title_text = f" {title} "
-            title_pos = x + (width - len(title_text)) // 2
+            title_pos = x + 2  # Left-align with small padding
             safe_addstr(stdscr, y, title_pos, title_text, COLORS["section"])
 
         # Side borders
@@ -695,7 +747,7 @@ def launch_phpup_with_feedback(stdscr: curses.window, cfg: Config, dry_run: bool
         display_command_output(stdscr, cmd, lines, proc.returncode)
 
 
-def display_server_success(stdscr: curses.window, server_info: Dict[str, str], output_lines: List[str]) -> None:
+def display_server_success(stdscr: curses.window, server_info: Dict[str, str], _output_lines: List[str]) -> None:
     """Display enhanced server startup success information."""
     # Enable mouse for this interface too
     try:
@@ -1196,17 +1248,169 @@ def shlex_escape(value: str) -> str:
     return "'" + value.replace("'", "'\\''") + "'"
 
 
+def render_project_info_adaptive(stdscr: curses.window, row: int, width: int, max_height: int) -> int:
+    """Render project information with adaptive height."""
+    project_info = get_project_info()
+
+    # Build content lines
+    content_lines = []
+
+    # Project name and path
+    project_name = project_info.get("name", "Unknown")
+    content_lines.append((f"📁 {project_name}", COLORS["title"], 4))
+
+    path = project_info.get("path", "")
+    if len(path) > width - 10:
+        path = "..." + path[-(width - 13):]
+    content_lines.append((f"📂 {path}", COLORS["field_value"], 4))
+
+    # Add other info based on available space
+    remaining_lines = max_height - 3  # Account for borders and basic info
+
+    # Project files (show fewer on small screens)
+    project_files = project_info.get("project_files", [])
+    if remaining_lines > 0 and project_files:
+        max_files = min(len(project_files), min(6, remaining_lines - 2))
+        for project_file in project_files[:max_files]:
+            content_lines.append((project_file, COLORS["field_value"], 6))
+            remaining_lines -= 1
+
+    # Web directories
+    web_dirs = project_info.get("web_dirs", [])
+    if remaining_lines > 0 and web_dirs:
+        web_text = f"🌐 Web: {', '.join(web_dirs)}"
+        content_lines.append((web_text[:width - 6], COLORS["field_value"], 4))
+        remaining_lines -= 1
+
+    # PHP files count
+    php_files = project_info.get("php_files")
+    if remaining_lines > 0 and php_files and php_files != "0":
+        content_lines.append((f"🐘 PHP files: {php_files}", COLORS["field_value"], 4))
+        remaining_lines -= 1
+
+    # Size and file count (always show if space)
+    if remaining_lines > 0:
+        size = project_info.get("size", "?")
+        file_count = project_info.get("file_count", "?")
+        content_lines.append((f"📊 {file_count} files, {size}", COLORS["status"], 4))
+
+    # Calculate actual box height
+    actual_height = min(max_height, len(content_lines) + 2)
+
+    # Draw box
+    draw_box(stdscr, row, 1, actual_height, width, "Project Info")
+
+    # Render content
+    for i, (text, color, indent) in enumerate(content_lines):
+        if i + 1 < actual_height - 1:  # Don't overflow box
+            safe_addstr(stdscr, row + 1 + i, indent, text, color)
+
+    return actual_height
+
+
+def render_project_info_scrollable(stdscr: curses.window, row: int, width: int, max_height: int, panel: ScrollablePanel) -> int:
+    """Render project information with scrollable content."""
+    project_info = get_project_info()
+
+    # Calculate actual content height needed
+    content_lines = 2  # Title + path
+    if project_info.get("project_files"):
+        content_lines += min(len(project_info["project_files"]), 6)
+    if project_info.get("web_dirs"):
+        content_lines += 1
+    if project_info.get("php_files") and project_info["php_files"] != "0":
+        content_lines += 1
+    if project_info.get("recommended_docroot"):
+        content_lines += 1
+    if project_info.get("phpup_configs"):
+        content_lines += 1
+    content_lines += 1  # Size/files line
+
+    # Update panel with actual dimensions
+    panel.content_height = content_lines
+    panel.visible_height = max_height - 2  # Account for borders
+
+    actual_height = min(max_height, content_lines + 2)  # +2 for borders
+
+    # Draw box
+    draw_box(stdscr, row, 1, actual_height, width, "Project Info")
+
+    # Get visible content range
+    start_line, end_line = panel.get_visible_range()
+
+    # Render visible content
+    content_row = row + 1
+    current_content_line = 0
+
+    # Build all content lines first
+    content = []
+
+    # Project name and path
+    project_name = project_info.get("name", "Unknown")
+    content.append((f"📁 {project_name}", COLORS["title"], 4))
+
+    path = project_info.get("path", "")
+    if len(path) > width - 10:
+        path = "..." + path[-(width - 13):]
+    content.append((f"📂 {path}", COLORS["field_value"], 4))
+
+    # Project files
+    project_files = project_info.get("project_files", [])
+    for project_file in project_files[:6]:
+        content.append((project_file, COLORS["field_value"], 6))
+
+    # Web directories
+    web_dirs = project_info.get("web_dirs", [])
+    if web_dirs:
+        web_text = f"🌐 Web: {', '.join(web_dirs)}"
+        content.append((web_text[:width - 6], COLORS["field_value"], 4))
+
+    # PHP files count
+    php_files = project_info.get("php_files")
+    if php_files and php_files != "0":
+        content.append((f"🐘 PHP files: {php_files}", COLORS["field_value"], 4))
+
+    # Recommended docroot
+    recommended_docroot = project_info.get("recommended_docroot")
+    if recommended_docroot:
+        content.append((f"🎯 Suggested docroot: {recommended_docroot}", COLORS["success"], 4))
+
+    # Config files
+    phpup_configs = project_info.get("phpup_configs", [])
+    if phpup_configs:
+        configs_text = f"⚙️  Configs: {', '.join(phpup_configs[:3])}"
+        content.append((configs_text[:width - 6], COLORS["field_value"], 4))
+
+    # Size and file count
+    size = project_info.get("size", "?")
+    file_count = project_info.get("file_count", "?")
+    content.append((f"📊 {file_count} files, {size}", COLORS["status"], 4))
+
+    # Render only visible lines
+    for i, (text, color, indent) in enumerate(content[start_line:end_line]):
+        if content_row + i - row < actual_height - 1:  # Don't overflow box
+            safe_addstr(stdscr, content_row + i, indent, text, color)
+
+    # Draw scroll indicators if needed
+    if panel.can_scroll_up():
+        safe_addstr(stdscr, row, width - 3, "▲", COLORS["status"])
+    if panel.can_scroll_down():
+        safe_addstr(stdscr, row + actual_height - 1, width - 3, "▼", COLORS["status"])
+
+    return actual_height
+
+
 def render_project_info(stdscr: curses.window, row: int, width: int) -> int:
     """Render project information box and return the height used."""
     project_info = get_project_info()
 
-    # Calculate box height based on content
+    # Calculate box height based on content with modest padding
     content_lines = 2  # Title + path
     if project_info.get("project_files"):
         content_lines += min(len(project_info["project_files"]), 6)  # Max 6 project files
     if project_info.get("web_dirs"):
         content_lines += 1  # Web dirs line
-    if project_info.get("php_files"):
+    if project_info.get("php_files") and project_info["php_files"] != "0":
         content_lines += 1  # PHP files line
     if project_info.get("recommended_docroot"):
         content_lines += 1  # Recommended docroot line
@@ -1223,54 +1427,80 @@ def render_project_info(stdscr: curses.window, row: int, width: int) -> int:
 
     # Project name and path
     project_name = project_info.get("name", "Unknown")
-    safe_addstr(stdscr, current_row, 3, f"📁 {project_name}", COLORS["title"])
+    safe_addstr(stdscr, current_row, 4, f"📁 {project_name}", COLORS["title"])
     current_row += 1
 
     # Path (truncated if too long)
     path = project_info.get("path", "")
     if len(path) > width - 10:
         path = "..." + path[-(width - 13):]
-    safe_addstr(stdscr, current_row, 3, f"📂 {path}", COLORS["field_value"])
+    safe_addstr(stdscr, current_row, 4, f"📂 {path}", COLORS["field_value"])
     current_row += 1
 
     # Project files
     project_files = project_info.get("project_files", [])
     for project_file in project_files[:6]:  # Max 6 to fit
-        safe_addstr(stdscr, current_row, 5, project_file, COLORS["field_value"])
+        safe_addstr(stdscr, current_row, 6, project_file, COLORS["field_value"])
         current_row += 1
 
     # Web directories
     web_dirs = project_info.get("web_dirs", [])
     if web_dirs:
         web_text = f"🌐 Web: {', '.join(web_dirs)}"
-        safe_addstr(stdscr, current_row, 3, web_text[:width - 6], COLORS["field_value"])
+        safe_addstr(stdscr, current_row, 4, web_text[:width - 6], COLORS["field_value"])
         current_row += 1
 
     # PHP files count
     php_files = project_info.get("php_files")
     if php_files and php_files != "0":
-        safe_addstr(stdscr, current_row, 3, f"🐘 PHP files: {php_files}", COLORS["field_value"])
+        safe_addstr(stdscr, current_row, 4, f"🐘 PHP files: {php_files}", COLORS["field_value"])
         current_row += 1
 
     # Recommended docroot
     recommended_docroot = project_info.get("recommended_docroot")
     if recommended_docroot:
-        safe_addstr(stdscr, current_row, 3, f"🎯 Suggested docroot: {recommended_docroot}", COLORS["success"])
+        safe_addstr(stdscr, current_row, 4, f"🎯 Suggested docroot: {recommended_docroot}", COLORS["success"])
         current_row += 1
 
     # phpup configuration files
     phpup_configs = project_info.get("phpup_configs", [])
     if phpup_configs:
         configs_text = f"⚙️  Configs: {', '.join(phpup_configs[:3])}"  # Max 3 to fit
-        safe_addstr(stdscr, current_row, 3, configs_text[:width - 6], COLORS["field_value"])
+        safe_addstr(stdscr, current_row, 4, configs_text[:width - 6], COLORS["field_value"])
         current_row += 1
 
     # Size and file count
     size = project_info.get("size", "?")
     file_count = project_info.get("file_count", "?")
-    safe_addstr(stdscr, current_row, 3, f"📊 {file_count} files, {size}", COLORS["status"])
+    safe_addstr(stdscr, current_row, 4, f"📊 {file_count} files, {size}", COLORS["status"])
 
     return box_height
+
+
+def render_command_preview_adaptive(stdscr: curses.window, row: int, cfg: Config, show_init: bool, width: int, height: int) -> None:
+    """Render command preview with adaptive height."""
+
+    # Draw command preview box
+    draw_box(stdscr, row, 1, height, width, "Command Preview")
+
+    # Render main command
+    cmd = cfg.build_command()
+    if cmd and os.path.abspath(cmd[0]) == os.path.abspath(PHPUP_PATH):
+        display_cmd = ["./phpup"] + cmd[1:]
+    else:
+        display_cmd = cmd
+    preview = f"{ICONS['run']} " + " ".join(shlex_escape(arg) for arg in display_cmd)
+    safe_addstr(stdscr, row + 1, 4, preview[:width - 6], COLORS["command"])
+
+    # Render init command if needed and there's space
+    if show_init and height >= 4:
+        init_cmd = cfg.build_init_command()
+        if init_cmd and os.path.abspath(init_cmd[0]) == os.path.abspath(PHPUP_PATH):
+            init_display = ["./phpup"] + init_cmd[1:]
+        else:
+            init_display = init_cmd
+        init_preview = f"{ICONS['init']} " + " ".join(shlex_escape(arg) for arg in init_display)
+        safe_addstr(stdscr, row + 2, 4, init_preview[:width - 6], COLORS["warning"])
 
 
 def render_command_preview(stdscr: curses.window, row: int, cfg: Config, show_init: bool) -> None:
@@ -1292,7 +1522,7 @@ def render_command_preview(stdscr: curses.window, row: int, cfg: Config, show_in
     else:
         display_cmd = cmd
     preview = f"{ICONS['run']} " + " ".join(shlex_escape(arg) for arg in display_cmd)
-    safe_addstr(stdscr, row + 1, 3, preview[:box_width - 5], COLORS["command"])
+    safe_addstr(stdscr, row + 1, 4, preview[:box_width - 6], COLORS["command"])
 
     # Render init command if needed
     if show_init:
@@ -1302,7 +1532,7 @@ def render_command_preview(stdscr: curses.window, row: int, cfg: Config, show_in
         else:
             init_display = init_cmd
         init_preview = f"{ICONS['init']} " + " ".join(shlex_escape(arg) for arg in init_display)
-        safe_addstr(stdscr, row + 2, 3, init_preview[:box_width - 5], COLORS["warning"])
+        safe_addstr(stdscr, row + 2, 4, init_preview[:box_width - 6], COLORS["warning"])
 
 
 def curses_main(stdscr: curses.window) -> None:
@@ -1355,25 +1585,41 @@ def curses_main(stdscr: curses.window) -> None:
         # Draw header
         draw_header(stdscr, show_init)
 
-        # Calculate layout dimensions (25% for actions panel)
-        actions_width = max(30, max_x // 4)  # 25% of screen width, minimum 30 chars
-        config_width = max_x - actions_width - 5 if max_x > 80 else max_x - 2
+        # Calculate layout dimensions with improved responsiveness
+        if max_x < 60:
+            # Small screen: no actions panel, full width for content
+            actions_width = 0
+            config_width = max_x - 4
+            show_actions = False
+        else:
+            # Normal screen: show actions panel
+            actions_width = max(25, min(35, max_x // 4))  # Responsive width
+            config_width = max_x - actions_width - 5
+            show_actions = True
 
         # Draw project info box
         project_start_row = 2
-        project_info_height = render_project_info(stdscr, project_start_row, config_width)
+        # Use adaptive rendering if screen is large enough, otherwise use regular
+        if max_y >= 20:
+            max_project_height = min(12, max_y // 3)
+            project_info_height = render_project_info_adaptive(stdscr, project_start_row, config_width, max_project_height)
+        else:
+            project_info_height = render_project_info(stdscr, project_start_row, config_width)
 
-        # Draw main configuration box below project info
+        # Draw main configuration box below project info with adaptive height
         config_start_row = project_start_row + project_info_height + 1
-        config_height = len(fields) + 4
-        if config_start_row + config_height < max_y - 5:
+        min_config_height = len(fields) + 5  # Minimum needed space
+        available_height_for_config = max_y - config_start_row - 6  # Reserve space for preview
+        config_height = max(min_config_height, min(min_config_height + 3, available_height_for_config))
+
+        if config_start_row + config_height < max_y - 3:
             draw_box(stdscr, config_start_row, 1, config_height, config_width, "Server Configuration")
 
         # Draw section headers
-        safe_addstr(stdscr, config_start_row + 1, 3, "── Basic Settings ──", COLORS["section"])
-        safe_addstr(stdscr, config_start_row + 6, 3, "── Advanced Options ──", COLORS["section"])
+        safe_addstr(stdscr, config_start_row + 1, 4, "── Basic Settings ──", COLORS["section"])
+        safe_addstr(stdscr, config_start_row + 6, 4, "── Advanced Options ──", COLORS["section"])
 
-        # Render fields with adjusted positions
+        # Render fields with modest spacing
         field_start_row = config_start_row + 2
         for idx, field in enumerate(fields[:4]):
             field.render(stdscr, field_start_row + idx, selected_index == idx)
@@ -1382,41 +1628,52 @@ def curses_main(stdscr: curses.window) -> None:
             offset = 1 if idx >= 4 else 0  # Add space after section header
             field.render(stdscr, field_start_row + idx + offset, selected_index == idx)
 
-        # Draw actions panel on the right side (align with project info)
-        actions_x = max_x - actions_width - 2
-        actions_height = 8 if show_init else 7
-
-        if project_start_row + actions_height < max_y and actions_x > max_x // 2:
+        # Draw actions panel on the right side (if screen is wide enough)
+        if show_actions:
+            actions_x = max_x - actions_width - 2
+            actions_height = 10 if show_init else 8  # Content + separators
             draw_box(stdscr, project_start_row, actions_x, actions_height, actions_width, "Actions")
 
-            action_y = project_start_row + 1
+            action_y = project_start_row + 1  # Modest padding
 
             if show_init:
                 actions = [
-                    ("F2", "Init", ICONS['init'], COLORS["warning"]),
-                    ("F3", "Stop All", ICONS['stop'], COLORS["error"]),
-                    ("F4", "Processes", ICONS['list'], COLORS["status"]),
                     ("F5", "Run", ICONS['run'], COLORS["success"]),
                     ("F6", "Test", ICONS['test'], COLORS["status"]),
+                    ("---", "", "", ""),  # Separator
+                    ("F2", "Init", ICONS['init'], COLORS["warning"]),
+                    ("F4", "Processes", ICONS['list'], COLORS["status"]),
+                    ("F3", "Stop All", ICONS['stop'], COLORS["error"]),
+                    ("---", "", "", ""),  # Separator
                     ("Q", "Quit", ICONS['quit'], COLORS["error"])
                 ]
             else:
                 actions = [
-                    ("F3", "Stop All", ICONS['stop'], COLORS["error"]),
-                    ("F4", "Processes", ICONS['list'], COLORS["status"]),
                     ("F5", "Run", ICONS['run'], COLORS["success"]),
                     ("F6", "Test", ICONS['test'], COLORS["status"]),
+                    ("---", "", "", ""),  # Separator
+                    ("F4", "Processes", ICONS['list'], COLORS["status"]),
+                    ("F3", "Stop All", ICONS['stop'], COLORS["error"]),
+                    ("---", "", "", ""),  # Separator
                     ("Q", "Quit", ICONS['quit'], COLORS["error"])
                 ]
 
             # Clear action regions for this frame
             action_regions.clear()
 
-            # Compact layout for actions with consistent spacing
+            # Layout for actions with separators
             for key, desc, icon, color in actions:
+                if key == "---":  # Separator
+                    # Draw a subtle separator line
+                    separator_width = actions_width - 6
+                    separator_line = "─" * separator_width
+                    safe_addstr(stdscr, action_y, actions_x + 3, separator_line, COLORS["border"])
+                    action_y += 1
+                    continue
+
                 # Make actions look more clickable with button-like appearance
                 action_text = f"{icon}  {key:3} - {desc}"
-                button_start = actions_x + 2
+                button_start = actions_x + 3  # Modest left padding
                 button_end = button_start + len(action_text) + 1
 
                 # Draw a subtle button background (using reverse for hover effect)
@@ -1433,13 +1690,41 @@ def curses_main(stdscr: curses.window) -> None:
                 ))
                 action_y += 1
 
-        # Render command preview below the main configuration box
+        # Render command preview below the main configuration box using remaining space
         command_preview_row = config_start_row + config_height + 1
-        if command_preview_row + 4 < max_y:
-            render_command_preview(stdscr, command_preview_row, cfg, show_init)
+        available_preview_space = max_y - command_preview_row - 1
+
+        if available_preview_space >= 3:  # Minimum space needed
+            if available_preview_space >= 5:
+                # Use adaptive preview if there's enough space
+                preview_height = min(5, available_preview_space)
+                render_command_preview_adaptive(stdscr, command_preview_row, cfg, show_init, config_width, preview_height)
+            else:
+                # Use regular preview for smaller spaces
+                render_command_preview(stdscr, command_preview_row, cfg, show_init)
+
+        # Draw status line at bottom with key hints
+        status_line = ""
+        if show_init:
+            status_line = "F2:Init F5:Run F6:Test F4:Processes F3:Stop Q:Quit"
+        else:
+            status_line = "F5:Run F6:Test F4:Processes F3:Stop Q:Quit"
+
+        if not show_actions:
+            # Show key hints when actions panel is hidden
+            status_line += " | ↑↓:Navigate Enter:Edit"
+
+        if len(status_line) < max_x - 2:
+            safe_addstr(stdscr, max_y - 1, 1, status_line, COLORS["status"])
+
         stdscr.refresh()
 
         key = stdscr.getch()
+
+        # Handle resize
+        if key == curses.KEY_RESIZE:
+            # Just continue to redraw with new dimensions
+            continue
 
         # Handle mouse events
         if key == curses.KEY_MOUSE:

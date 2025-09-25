@@ -150,6 +150,9 @@ sudo ./phpup --install
 # Auto-open browser after starting
 ./phpup --open
 
+# Interactive TUI interface
+phpui
+
 # Development with file watching (auto-reload on changes)
 ./phpup --watch --verbose
 
@@ -167,8 +170,13 @@ There is also a lightweight curses-based helper in `tui/phpup_tui.py`:
 - Python 3.6+ (uses built-in libraries only: curses, subprocess, os, sys, dataclasses)
 - Terminal with color support (recommended)
 
+**Usage:**
 ```bash
+# Run from the project directory
 python3 tui/phpup_tui.py
+
+# Or if installed globally with --install:
+phpui
 ```
 
 Use the arrow keys or mouse to navigate between fields, press Enter or click to edit values.
@@ -239,9 +247,12 @@ sudo ./phpup --install
 
 This will:
 1. Install `phpup` to `/usr/local/bin/` for system-wide access
-2. Check if FrankenPHP is available
-3. If FrankenPHP is not found, automatically download and install it using the official installer
-4. Set up proper permissions for both tools
+2. Install the TUI as `phpui` command for global access
+3. Check if FrankenPHP is available
+4. If FrankenPHP is not found, automatically download and install it using the official installer
+5. Set up proper permissions for both tools
+
+After installation, you can use `phpup` and `phpui` from any directory.
 
 Custom FrankenPHP Builds
 
