@@ -33,7 +33,7 @@ VERBOSE=0
 COMPRESSION=1
 OPEN_BROWSER=0
 ENV_FILE=""
-EXTRA_ARGS=""
+EXTRA_ARGS=()
 INIT_MODE=0
 INSTALL_MODE=0
 BUILD_PHP_MODE=0
@@ -322,7 +322,7 @@ validate_file_path() {
 
   # Prevent path traversal and dangerous paths
   case "$path" in
-    */..* | */../* | ../* | */./* | ./* | /etc/* | /usr/* | /bin/* | /sbin/* | /var/* | /sys/* | /proc/*)
+    */..* | */../* | ../* | */./* | /etc/* | /usr/* | /bin/* | /sbin/* | /var/* | /sys/* | /proc/*)
       return 1 ;;
   esac
 
@@ -471,7 +471,7 @@ while [ $# -gt 0 ]; do
             err "Invalid characters in extra arguments: $arg"; exit 2 ;;
         esac
       done
-      EXTRA_ARGS="$*"
+      EXTRA_ARGS=("$@")
       break;;
     *)
       err "Unknown option: $1"; usage; exit 2;;
@@ -1353,20 +1353,19 @@ if [ "$HTTPS_MODE" = "on" ]; then
   fi
 fi
 
-# Check if the requested port is available
-if ! is_port_free "$HOST" "$START_PORT"; then
-  err "❌ Port $START_PORT is already in use!"
-  log "Another process is already listening on $HOST:$START_PORT"
-  log ""
-  log "Options:"
-  log "  1. Stop the other process using port $START_PORT"
-  log "  2. Use a different port with --port"
-  log "  3. Stop all phpup instances with: ./phpup --stop"
+# Discover a free port starting from the requested value
+AVAILABLE_PORT=$(find_free_port "$HOST" "$START_PORT") || {
+  err "❌ Did not find any free port starting at $START_PORT"
+  log "Tried $((2000 + 1)) consecutive ports without success."
+  log "You can pick an explicit port with --port or stop other listeners."
   exit 1
+}
+
+if [ "$AVAILABLE_PORT" != "$START_PORT" ]; then
+  log "ℹ️  Port $START_PORT is busy, switching to $AVAILABLE_PORT"
 fi
 
-# Use the requested port since it's available
-PORT="$START_PORT"
+PORT="$AVAILABLE_PORT"
 
 # Set protocol based on HTTPS mode
 if [ "$HTTPS_MODE" = "off" ]; then
@@ -1402,6 +1401,10 @@ if [ -n "$CADDYFILE" ]; then
     CMD=(frankenphp run --config "$FINAL_CADDYFILE")
   else
     CMD=(frankenphp start --config "$FINAL_CADDYFILE")
+  fi
+
+  if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
+    CMD+=("${EXTRA_ARGS[@]}")
   fi
 
   if [ "$DRY_RUN" -ne 1 ]; then
@@ -1704,8 +1707,8 @@ else
   CMD+=("--config" "$FINAL_CADDYFILE")
 
   # Add extra args if provided
-  if [ -n "$EXTRA_ARGS" ]; then
-    CMD+=($EXTRA_ARGS)
+  if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
+    CMD+=("${EXTRA_ARGS[@]}")
   fi
 
   if [ "$DRY_RUN" -ne 1 ]; then
