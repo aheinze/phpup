@@ -155,7 +155,7 @@ Development & Debug:
 
 Other Options:
   --init                Generate .phpup/ config files and exit
-  --install             Install phpup to /usr/local/bin/ for system-wide use
+  --install             Install phpup and TUI to /usr/local/bin/ for system-wide use
   --build-php           Interactive helper to build custom FrankenPHP with additional extensions
   --stop                Stop all running FrankenPHP processes and exit
   --list                List running FrankenPHP instances for current user
@@ -174,8 +174,11 @@ Examples:
   # Initialize configuration files for customization
   ./phpup --init
 
-  # Install phpup system-wide
+  # Install phpup system-wide (includes TUI)
   sudo ./phpup --install
+
+  # Use the interactive TUI
+  python3 tui/phpup_tui.py  # or 'phpui' if installed globally
 
   # Build custom FrankenPHP with Xdebug
   ./phpup --build-php
@@ -638,11 +641,36 @@ if [ "$INSTALL_MODE" -eq 1 ]; then
     exit 1
   fi
 
-  # Copy the script
-  cp "$SCRIPT_PATH" /usr/local/bin/phpup || {
-    err "Failed to copy phpup to /usr/local/bin/"
-    exit 1
-  }
+  # Check if already installed to avoid copying file to itself
+  if [ "$SCRIPT_PATH" = "/usr/local/bin/phpup" ]; then
+    log "⚠️  phpup is already installed at /usr/local/bin/phpup"
+    log "   Running from the same location - no update needed"
+  elif [ -f "/usr/local/bin/phpup" ]; then
+    log "⚠️  phpup is already installed at /usr/local/bin/phpup"
+    printf "   Override existing installation? [y/N]: "
+    read -r response
+    case "$response" in
+      [yY]|[yY][eE][sS])
+        log "🔄 Overriding existing installation..."
+        cp "$SCRIPT_PATH" /usr/local/bin/phpup || {
+          err "Failed to copy phpup to /usr/local/bin/"
+          exit 1
+        }
+        log "✅ Successfully updated phpup at /usr/local/bin/"
+        ;;
+      *)
+        log "❌ Installation cancelled"
+        exit 0
+        ;;
+    esac
+  else
+    # Copy the script (first time installation)
+    cp "$SCRIPT_PATH" /usr/local/bin/phpup || {
+      err "Failed to copy phpup to /usr/local/bin/"
+      exit 1
+    }
+    log "✅ Successfully installed phpup to /usr/local/bin/"
+  fi
 
   # Make it executable
   chmod +x /usr/local/bin/phpup || {
@@ -650,7 +678,32 @@ if [ "$INSTALL_MODE" -eq 1 ]; then
     exit 1
   }
 
-  log "✅ Successfully installed phpup to /usr/local/bin/"
+
+  # Install TUI if it exists
+  TUI_PATH="$(dirname "$SCRIPT_PATH")/tui/phpup_tui.py"
+  if [ -f "$TUI_PATH" ]; then
+    log "📱 Installing phpup TUI to /usr/local/bin/phpui"
+
+    # Copy TUI script
+    cp "$TUI_PATH" /usr/local/bin/phpui || {
+      log "⚠️  Failed to copy TUI to /usr/local/bin/, skipping..."
+    }
+
+    # Make it executable
+    if [ -f /usr/local/bin/phpui ]; then
+      chmod +x /usr/local/bin/phpui || {
+        log "⚠️  Failed to make phpui executable"
+      }
+
+      # Update the shebang line and PHPUP_PATH for global installation
+      sed -i '1s|.*|#!/usr/bin/env python3|' /usr/local/bin/phpui
+      sed -i 's|PHPUP_PATH = os.path.join(SCRIPT_ROOT, "phpup")|PHPUP_PATH = "/usr/local/bin/phpup"|' /usr/local/bin/phpui
+
+      log "✅ TUI installed successfully - run 'phpui' from anywhere"
+    fi
+  else
+    log "ℹ️  TUI not found at $TUI_PATH, skipping TUI installation"
+  fi
 
   # Check if FrankenPHP is available
   if ! command_exists frankenphp; then

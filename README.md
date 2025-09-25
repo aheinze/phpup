@@ -159,6 +159,40 @@ sudo ./phpup --install
 # Worker mode with custom PHP threads
 ./phpup --worker --php-threads 10
 
+# Interactive TUI frontend
+
+There is also a lightweight curses-based helper in `tui/phpup_tui.py`:
+
+**Requirements:**
+- Python 3.6+ (uses built-in libraries only: curses, subprocess, os, sys, dataclasses)
+- Terminal with color support (recommended)
+
+```bash
+python3 tui/phpup_tui.py
+```
+
+Use the arrow keys or mouse to navigate between fields, press Enter or click to edit values.
+Action buttons (F2-F6, Q) are clickable for quick access. Configuration fields can also be clicked to edit directly.
+
+The TUI automatically detects common web project structures and suggests appropriate document roots:
+- `public/` (Laravel, Symfony, modern PHP frameworks)
+- `web/` (Drupal, some frameworks)
+- `www/`, `htdocs/` (traditional web roots)
+- `dist/`, `build/` (built frontend projects)
+
+Auto-detected values are marked as "(auto-detected)" and can be overridden by editing the field.
+
+**Available actions:**
+- F2: Initialize project configuration (when needed)
+- F3: Stop all FrankenPHP processes
+- F4: Process manager (list/kill processes)
+- F5: Run server
+- F6: Test/dry-run (show command preview)
+- Q: Quit TUI
+
+The footer shows the exact commands that will be executed. The TUI keeps the
+original CLI intact while offering a friendlier way to tweak common options.
+
 # List running FrankenPHP instances
 ./phpup --list
 
