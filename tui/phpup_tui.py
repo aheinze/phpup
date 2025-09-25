@@ -14,7 +14,7 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 
 SCRIPT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -53,6 +53,7 @@ ICONS = {
     "test": "🧪",
     "init": "🎯",
     "list": "📋",
+    "stats": "📊",
     "stop": "🛑",
     "kill": "⚡",
     "quit": "🚪",
@@ -317,7 +318,7 @@ class ScrollablePanel:
         max_scroll = max(0, self.content_height - self.visible_height)
         self.scroll_offset = min(max_scroll, self.scroll_offset + lines)
 
-    def get_visible_range(self) -> tuple[int, int]:
+    def get_visible_range(self) -> Tuple[int, int]:
         """Returns (start_line, end_line) for visible content."""
         start = self.scroll_offset
         end = min(start + self.visible_height, self.content_height)
@@ -885,7 +886,7 @@ def display_process_list_readonly(stdscr: curses.window, processes: List[Dict[st
     for i, process in enumerate(processes):
         if start_row + i >= max_y - 2:
             break
-        line = f"{process['pid']:>7} {process['listen']:20} {process['mode']:8} {process['config']:30} {process['docroot']}"
+        line = f"{process['pid']:>7} {process['listen']:20} {process['mode']:8} {process.get('started_from', '-'):30} {process.get('config', '-')}"
         safe_addstr(stdscr, start_row + i, 0, line[:max_x-1], COLORS["field_value"])
 
     stdscr.refresh()
@@ -961,20 +962,103 @@ def get_running_processes() -> List[Dict[str, str]]:
                line.startswith('No FrankenPHP') or '---' in line:
                 continue
 
-            # Parse process info (PID, LISTEN, MODE, CONFIG, DOCROOT)
+            # Parse process info (PID, LISTEN, MODE, STARTED FROM, CONFIG)
             parts = line.split(None, 4)  # Split into max 5 parts
             if len(parts) >= 4:
                 processes.append({
                     'pid': parts[0],
                     'listen': parts[1] if len(parts) > 1 else '-',
                     'mode': parts[2] if len(parts) > 2 else '-',
-                    'config': parts[3] if len(parts) > 3 else '-',
-                    'docroot': parts[4] if len(parts) > 4 else '-'
+                    'started_from': parts[3] if len(parts) > 3 else '-',
+                    'config': parts[4] if len(parts) > 4 else '-'
                 })
 
         return processes
     except (subprocess.SubprocessError, FileNotFoundError):
         return []
+
+
+def show_process_stats(stdscr: curses.window) -> None:
+    """Show detailed statistics for running FrankenPHP processes."""
+    try:
+        result = subprocess.run([PHPUP_PATH, "--stats"],
+                              capture_output=True, text=True)
+        if result.returncode != 0:
+            stdscr.clear()
+            safe_addstr(stdscr, 0, 0, "❌ Failed to get process statistics", COLORS["error"])
+            safe_addstr(stdscr, 2, 0, "Press any key to return", COLORS["status"])
+            stdscr.refresh()
+            stdscr.getch()
+            return
+
+        lines = result.stdout.strip().split('\n')
+
+        # Enable mouse for this interface
+        try:
+            curses.mousemask(curses.ALL_MOUSE_EVENTS)
+        except curses.error:
+            pass
+
+        page = 0
+        per_page = 0
+
+        while True:
+            stdscr.clear()
+            max_y, max_x = stdscr.getmaxyx()
+
+            # Header
+            safe_addstr(stdscr, 0, 0, "📊 FrankenPHP Process Statistics", COLORS["title"])
+
+            # Draw separator
+            if max_y > 1 and max_x > 1:
+                try:
+                    stdscr.hline(1, 0, curses.ACS_HLINE, max_x - 1)
+                except curses.error:
+                    pass
+
+            # Calculate pagination
+            content_lines = [line for line in lines if line.strip() and not line.startswith('📊')]
+            per_page = max_y - 4  # Reserve space for header and footer
+
+            if not content_lines:
+                safe_addstr(stdscr, 3, 0, "No FrankenPHP processes found for current user.", COLORS["status"])
+                safe_addstr(stdscr, max_y - 1, 0, "Press any key to return", COLORS["status"])
+            else:
+                # Show paginated content
+                start = page * per_page
+                end = min(start + per_page, len(content_lines))
+
+                for i, line in enumerate(content_lines[start:end]):
+                    row = 2 + i
+                    if row < max_y - 1:
+                        if line.startswith('PID'):
+                            # Header line
+                            safe_addstr(stdscr, row, 0, line[:max_x-1], COLORS["field_label"])
+                        else:
+                            # Data line
+                            safe_addstr(stdscr, row, 0, line[:max_x-1], COLORS["field_value"])
+
+                # Footer with navigation
+                footer = f"Page {page + 1}/{(len(content_lines) + per_page - 1) // per_page} | PgUp/PgDn: Navigate | Any other key: Return"
+                safe_addstr(stdscr, max_y - 1, 0, footer[:max_x-1], COLORS["status"])
+
+            stdscr.refresh()
+            key = stdscr.getch()
+
+            # Handle navigation
+            if key in (curses.KEY_NPAGE, ord('j')) and (page + 1) * per_page < len(content_lines):
+                page += 1
+            elif key in (curses.KEY_PPAGE, ord('k')) and page > 0:
+                page -= 1
+            else:
+                break
+
+    except (subprocess.SubprocessError, FileNotFoundError):
+        stdscr.clear()
+        safe_addstr(stdscr, 0, 0, "❌ phpup script not found or failed", COLORS["error"])
+        safe_addstr(stdscr, 2, 0, "Press any key to return", COLORS["status"])
+        stdscr.refresh()
+        stdscr.getch()
 
 
 def unified_process_manager(stdscr: curses.window) -> None:
@@ -1014,9 +1098,9 @@ def unified_process_manager(stdscr: curses.window) -> None:
         # Table header
         if max_y > 3:
             if kill_mode:
-                header = f"{'':3} {'PID':>7} {'LISTEN':20} {'MODE':8} {'CONFIG':30} DOCROOT"
+                header = f"{'':3} {'PID':>7} {'LISTEN':20} {'MODE':8} {'STARTED FROM':30} CONFIG"
             else:
-                header = f"{'PID':>7} {'LISTEN':20} {'MODE':8} {'CONFIG':30} DOCROOT"
+                header = f"{'PID':>7} {'LISTEN':20} {'MODE':8} {'STARTED FROM':30} CONFIG"
             safe_addstr(stdscr, 3, 0, header, COLORS["field_label"])
 
         # Process list
@@ -1029,11 +1113,11 @@ def unified_process_manager(stdscr: curses.window) -> None:
                 # Show checkbox in kill mode
                 checkbox = "☑" if selected[i] else "☐"
                 highlight = COLORS["selected_value"] if i == current_row else COLORS["field_value"]
-                line = f"{checkbox:3} {process['pid']:>7} {process['listen']:20} {process['mode']:8} {process['config']:30} {process['docroot']}"
+                line = f"{checkbox:3} {process['pid']:>7} {process['listen']:20} {process['mode']:8} {process.get('started_from', '-'):30} {process.get('config', '-')}"
             else:
                 # Simple list in view mode
                 highlight = COLORS["selected_value"] if i == current_row else COLORS["field_value"]
-                line = f"{process['pid']:>7} {process['listen']:20} {process['mode']:8} {process['config']:30} {process['docroot']}"
+                line = f"{process['pid']:>7} {process['listen']:20} {process['mode']:8} {process.get('started_from', '-'):30} {process.get('config', '-')}"
 
             safe_addstr(stdscr, start_row + i, 0, line[:max_x-1], highlight)
 
@@ -1140,7 +1224,7 @@ def select_processes_to_kill(stdscr: curses.window) -> None:
 
         # Table header
         if max_y > 3:
-            header = f"{'':3} {'PID':>7} {'LISTEN':20} {'MODE':8} {'CONFIG':30} DOCROOT"
+            header = f"{'':3} {'PID':>7} {'LISTEN':20} {'MODE':8} {'STARTED FROM':30} CONFIG"
             safe_addstr(stdscr, 3, 0, header, COLORS["field_label"])
 
         # Process list
@@ -1154,7 +1238,7 @@ def select_processes_to_kill(stdscr: curses.window) -> None:
             highlight = COLORS["selected_value"] if i == current_row else COLORS["field_value"]
 
             # Format process line
-            line = f"{checkbox:3} {process['pid']:>7} {process['listen']:20} {process['mode']:8} {process['config']:30} {process['docroot']}"
+            line = f"{checkbox:3} {process['pid']:>7} {process['listen']:20} {process['mode']:8} {process.get('started_from', '-'):30} {process.get('config', '-')}"
             safe_addstr(stdscr, start_row + i, 0, line[:max_x-1], highlight)
 
         # Footer with selected count
@@ -1210,7 +1294,7 @@ def kill_selected_processes(stdscr: curses.window, pids: List[str], processes: L
         # Find process info for this PID
         process_info = next((p for p in processes if p['pid'] == pid), None)
         if process_info:
-            info = f"PID {pid}: {process_info['listen']} ({process_info['mode']}) - {process_info['docroot']}"
+            info = f"PID {pid}: {process_info['listen']} ({process_info['mode']}) - Started from: {process_info.get('started_from', '-')}"
         else:
             info = f"PID {pid}"
         safe_addstr(stdscr, row, 2, info, COLORS["field_value"])
@@ -1631,7 +1715,7 @@ def curses_main(stdscr: curses.window) -> None:
         # Draw actions panel on the right side (if screen is wide enough)
         if show_actions:
             actions_x = max_x - actions_width - 2
-            actions_height = 10 if show_init else 8  # Content + separators
+            actions_height = 11 if show_init else 9  # Content + separators + Stats action
             draw_box(stdscr, project_start_row, actions_x, actions_height, actions_width, "Actions")
 
             action_y = project_start_row + 1  # Modest padding
@@ -1643,6 +1727,7 @@ def curses_main(stdscr: curses.window) -> None:
                     ("---", "", "", ""),  # Separator
                     ("F2", "Init", ICONS['init'], COLORS["warning"]),
                     ("F4", "Processes", ICONS['list'], COLORS["status"]),
+                    ("F7", "Stats", ICONS['stats'], COLORS["status"]),
                     ("F3", "Stop All", ICONS['stop'], COLORS["error"]),
                     ("---", "", "", ""),  # Separator
                     ("Q", "Quit", ICONS['quit'], COLORS["error"])
@@ -1653,6 +1738,7 @@ def curses_main(stdscr: curses.window) -> None:
                     ("F6", "Test", ICONS['test'], COLORS["status"]),
                     ("---", "", "", ""),  # Separator
                     ("F4", "Processes", ICONS['list'], COLORS["status"]),
+                    ("F7", "Stats", ICONS['stats'], COLORS["status"]),
                     ("F3", "Stop All", ICONS['stop'], COLORS["error"]),
                     ("---", "", "", ""),  # Separator
                     ("Q", "Quit", ICONS['quit'], COLORS["error"])
@@ -1706,9 +1792,9 @@ def curses_main(stdscr: curses.window) -> None:
         # Draw status line at bottom with key hints
         status_line = ""
         if show_init:
-            status_line = "F2:Init F5:Run F6:Test F4:Processes F3:Stop Q:Quit"
+            status_line = "F2:Init F5:Run F6:Test F4:Processes F7:Stats F3:Stop Q:Quit"
         else:
-            status_line = "F5:Run F6:Test F4:Processes F3:Stop Q:Quit"
+            status_line = "F5:Run F6:Test F4:Processes F7:Stats F3:Stop Q:Quit"
 
         if not show_actions:
             # Show key hints when actions panel is hidden
@@ -1741,6 +1827,8 @@ def curses_main(stdscr: curses.window) -> None:
                             run_phpup_command(stdscr, cfg.build_stop_command())
                         elif clicked_key == "F4":
                             unified_process_manager(stdscr)
+                        elif clicked_key == "F7":
+                            show_process_stats(stdscr)
                         elif clicked_key == "F5":
                             launch_phpup(stdscr, cfg, dry_run=False)
                         elif clicked_key == "F6":
@@ -1770,6 +1858,8 @@ def curses_main(stdscr: curses.window) -> None:
             run_phpup_command(stdscr, cfg.build_stop_command())
         elif key == curses.KEY_F4:
             unified_process_manager(stdscr)
+        elif key == curses.KEY_F7:
+            show_process_stats(stdscr)
         elif key == curses.KEY_F5:
             launch_phpup(stdscr, cfg, dry_run=False)
         elif key == curses.KEY_F6:

@@ -190,10 +190,16 @@ The TUI automatically detects common web project structures and suggests appropr
 
 Auto-detected values are marked as "(auto-detected)" and can be overridden by editing the field.
 
+**Responsive Interface:**
+- Automatically adapts to terminal size changes
+- Hides/shows panels based on available space
+- Works on terminals as small as 40x10
+- Instant resize handling without losing state
+
 **Available actions:**
 - F2: Initialize project configuration (when needed)
 - F3: Stop all FrankenPHP processes
-- F4: Process manager (list/kill processes)
+- F4: Process manager (shows working directory for each process)
 - F5: Run server
 - F6: Test/dry-run (show command preview)
 - Q: Quit TUI
@@ -201,7 +207,8 @@ Auto-detected values are marked as "(auto-detected)" and can be overridden by ed
 The footer shows the exact commands that will be executed. The TUI keeps the
 original CLI intact while offering a friendlier way to tweak common options.
 
-# List running FrankenPHP instances
+# List running FrankenPHP instances with their working directories
+# Shows which folder each server was started from
 ./phpup --list
 
 # HTTPS with local certificates

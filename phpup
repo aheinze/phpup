@@ -38,6 +38,7 @@ INIT_MODE=0
 INSTALL_MODE=0
 BUILD_PHP_MODE=0
 LIST_MODE=0
+STATS_MODE=0
 
 log() {
   if [ "$QUIET" -ne 1 ]; then
@@ -159,6 +160,7 @@ Other Options:
   --build-php           Interactive helper to build custom FrankenPHP with additional extensions
   --stop                Stop all running FrankenPHP processes and exit
   --list                List running FrankenPHP instances for current user
+  --stats               Show detailed statistics (uptime, memory, threads) for running processes
   --dry-run             Print the computed command and exit
   --quiet               Reduce output
   -h, --help            Show this help
@@ -459,6 +461,8 @@ while [ $# -gt 0 ]; do
       STOP_MODE=1; shift;;
     --list)
       LIST_MODE=1; shift;;
+    --stats)
+      STATS_MODE=1; shift;;
     --dry-run)
       DRY_RUN=1; shift;;
     --quiet)
@@ -481,6 +485,75 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Helper to collect listeners for a PID
+get_listeners_for_pid() {
+  local pid="$1"
+  if command_exists ss; then
+    ss -Hlnpt 2>/dev/null | awk -v pid="$pid" '$0 ~ "pid="pid"," {print $4}' | sort -u
+  elif command_exists lsof; then
+    lsof -nP -iTCP -sTCP:LISTEN -p "$pid" 2>/dev/null | awk 'NR>1 {print $9}' | sort -u
+  else
+    echo "-"
+  fi
+}
+
+# Helper to get process statistics
+get_process_stats() {
+  local pid="$1"
+  local stats_file="/proc/$pid/stat"
+  local status_file="/proc/$pid/status"
+
+  if [ ! -f "$stats_file" ] || [ ! -f "$status_file" ]; then
+    echo "- - - - -"
+    return
+  fi
+
+  # Get process start time and calculate uptime
+  local starttime=$(awk '{print $22}' "$stats_file" 2>/dev/null)
+  local boot_time=$(awk '/^btime/ {print $2}' /proc/stat 2>/dev/null)
+  local uptime_seconds=0
+
+  if [ -n "$starttime" ] && [ -n "$boot_time" ]; then
+    local clock_ticks=$(getconf CLK_TCK 2>/dev/null || echo 100)
+    local process_start_time=$((boot_time + starttime / clock_ticks))
+    local current_time=$(date +%s)
+    uptime_seconds=$((current_time - process_start_time))
+  fi
+
+  # Format uptime
+  local uptime_formatted
+  if [ "$uptime_seconds" -lt 60 ]; then
+    uptime_formatted="${uptime_seconds}s"
+  elif [ "$uptime_seconds" -lt 3600 ]; then
+    uptime_formatted="$((uptime_seconds / 60))m"
+  else
+    uptime_formatted="$((uptime_seconds / 3600))h"
+  fi
+
+  # Get memory usage (RSS in kB)
+  local memory_kb=$(awk '/^VmRSS:/ {print $2}' "$status_file" 2>/dev/null || echo "0")
+  local memory_mb=$((memory_kb / 1024))
+  local memory_formatted
+  if [ "$memory_mb" -ge 1024 ]; then
+    memory_formatted="$((memory_mb / 1024))GB"
+  else
+    memory_formatted="${memory_mb}MB"
+  fi
+
+  # Get open file descriptor count
+  local fd_count
+  if [ -d "/proc/$pid/fd" ]; then
+    fd_count=$(ls /proc/$pid/fd 2>/dev/null | wc -l)
+  else
+    fd_count="-"
+  fi
+
+  # Get thread count
+  local threads=$(awk '/^Threads:/ {print $2}' "$status_file" 2>/dev/null || echo "-")
+
+  echo "$uptime_formatted $memory_formatted $fd_count $threads"
+}
+
 # Helper: list running FrankenPHP instances owned by current user
 list_instances() {
   log "🔎 Listing FrankenPHP processes for current user..."
@@ -493,22 +566,11 @@ list_instances() {
     return 0
   fi
 
-  # Helper to collect listeners for a PID
-  get_listeners_for_pid() {
-    local pid="$1"
-    if command_exists ss; then
-      ss -Hlnpt 2>/dev/null | awk -v pid="$pid" '$0 ~ "pid="pid"," {print $4}' | sort -u
-    elif command_exists lsof; then
-      lsof -nP -iTCP -sTCP:LISTEN -p "$pid" 2>/dev/null | awk 'NR>1 {print $9}' | sort -u
-    else
-      echo "-"
-    fi
-  }
 
   # Print header
-  printf "%s\n" "PID     LISTEN                MODE     CONFIG                         DOCROOT"
+  printf "%s\n" "PID     LISTEN                MODE     STARTED FROM                        CONFIG"
 
-  local pid cmdline config listeners mode docroot
+  local pid cmdline config listeners mode docroot workdir
   for pid in $PIDS; do
     # Validate ownership and existence
     if [ ! -d "/proc/$pid" ] || [ "$(stat -c %u "/proc/$pid" 2>/dev/null || echo 0)" != "$(id -u)" ]; then
@@ -517,28 +579,97 @@ list_instances() {
 
     cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || echo "")
 
+    # Get working directory where process was started
+    workdir=$(readlink "/proc/$pid/cwd" 2>/dev/null || echo "-")
+
+    # Shorten path for display if too long
+    if [ "${#workdir}" -gt 35 ] && [ "$workdir" != "-" ]; then
+      # Show last part of path with ...
+      workdir="...${workdir: -32}"
+    fi
+
     # Extract --config value (best-effort)
     config=$(printf '%s' "$cmdline" | sed -n 's/.*--config \([^ ]\+\).*/\1/p')
     [ -z "$config" ] && config="-"
+
+    # Shorten config path for display
+    if [ "${#config}" -gt 25 ] && [ "$config" != "-" ]; then
+      config="...${config: -22}"
+    fi
 
     # Determine listeners
     listeners=$(get_listeners_for_pid "$pid" | paste -sd, -)
     [ -z "$listeners" ] && listeners="-"
 
-    # Determine mode/docroot from config (best-effort)
-    mode="-"; docroot="-"
+    # Determine mode from config (best-effort)
+    mode="-"
     if [ -f "$config" ]; then
       if grep -qE "^[[:space:]]*worker[[:space:]]*\{" "$config" 2>/dev/null; then
         mode="worker"
       else
         mode="classic"
       fi
-      # Try to parse: root * "<path>"
-      docroot=$(awk '/^[[:space:]]*root[[:space:]]*\*/ { if (match($0, /root[[:space:]]*\*[[:space:]]*"([^"]+)"/, a)) { print a[1]; exit } }' "$config" 2>/dev/null || echo "-")
-      [ -z "$docroot" ] && docroot="-"
     fi
 
-    printf "%-7s %-20s %-8s %-30s %s\n" "$pid" "${listeners}" "$mode" "$config" "$docroot"
+    printf "%-7s %-20s %-8s %-35s %s\n" "$pid" "${listeners}" "$mode" "$workdir" "$config"
+  done
+}
+
+# Show detailed statistics for running processes
+stats_instances() {
+  log "📊 Gathering statistics for FrankenPHP processes..."
+
+  local PIDS
+  PIDS=$(pgrep -f "frankenphp" -u "$(id -u)" 2>/dev/null || true)
+
+  if [ -z "$PIDS" ]; then
+    echo "No FrankenPHP processes found for current user."
+    return 0
+  fi
+
+  # Print header
+  printf "%s\n" "PID     LISTEN           MODE     UPTIME  MEMORY  FILES THREADS  STARTED FROM"
+
+  local pid cmdline config listeners mode workdir stats_info
+  for pid in $PIDS; do
+    # Validate ownership and existence
+    if [ ! -d "/proc/$pid" ] || [ "$(stat -c %u "/proc/$pid" 2>/dev/null || echo 0)" != "$(id -u)" ]; then
+      continue
+    fi
+
+    cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || echo "")
+
+    # Get working directory
+    workdir=$(readlink "/proc/$pid/cwd" 2>/dev/null || echo "-")
+    if [ "${#workdir}" -gt 25 ] && [ "$workdir" != "-" ]; then
+      workdir="...${workdir: -22}"
+    fi
+
+    # Extract config
+    config=$(printf '%s' "$cmdline" | sed -n 's/.*--config \([^ ]\+\).*/\1/p')
+    [ -z "$config" ] && config="-"
+
+    # Determine listeners
+    listeners=$(get_listeners_for_pid "$pid" | paste -sd, -)
+    [ -z "$listeners" ] && listeners="-"
+    if [ "${#listeners}" -gt 15 ]; then
+      listeners="${listeners:0:12}..."
+    fi
+
+    # Determine mode
+    mode="-"
+    if [ -f "$config" ]; then
+      if grep -qE "^[[:space:]]*worker[[:space:]]*\{" "$config" 2>/dev/null; then
+        mode="worker"
+      else
+        mode="classic"
+      fi
+    fi
+
+    # Get statistics
+    stats_info=$(get_process_stats "$pid")
+
+    printf "%-7s %-15s %-8s %s  %s\n" "$pid" "${listeners}" "$mode" "$stats_info" "$workdir"
   done
 }
 
@@ -620,6 +751,12 @@ fi
 # Handle list mode
 if [ "$LIST_MODE" -eq 1 ]; then
   list_instances
+  exit 0
+fi
+
+# Handle stats mode
+if [ "$STATS_MODE" -eq 1 ]; then
+  stats_instances
   exit 0
 fi
 
