@@ -13,6 +13,8 @@ import itertools
 import os
 import subprocess
 import sys
+import time
+import threading
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -58,6 +60,11 @@ ICONS = {
     "kill": "⚡",
     "quit": "🚪",
 }
+
+# Animation frames for spinner
+SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+PULSE_FRAMES = ["◐", "◓", "◑", "◒"]
+DOT_FRAMES = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
 
 COLORS: Dict[str, int] = {
     "header": curses.A_REVERSE,
@@ -296,6 +303,31 @@ class ActionRegion:
 
     def contains_click(self, row: int, col: int) -> bool:
         return self.row == row and self.col_start <= col <= self.col_end
+
+
+class Spinner:
+    """Animated spinner for loading states."""
+    def __init__(self, frames: List[str] = None):
+        self.frames = frames or SPINNER_FRAMES
+        self.frame_index = 0
+        self.running = False
+        self._thread = None
+        self._lock = threading.Lock()
+
+    def get_frame(self) -> str:
+        """Get current spinner frame."""
+        with self._lock:
+            return self.frames[self.frame_index % len(self.frames)]
+
+    def next_frame(self) -> None:
+        """Advance to next frame."""
+        with self._lock:
+            self.frame_index = (self.frame_index + 1) % len(self.frames)
+
+    def reset(self) -> None:
+        """Reset spinner to first frame."""
+        with self._lock:
+            self.frame_index = 0
 
 
 @dataclass
@@ -574,55 +606,74 @@ def get_project_info() -> Dict[str, str]:
     return info
 
 
-def draw_box(stdscr: curses.window, y: int, x: int, height: int, width: int, title: str = "") -> None:
-    """Draw a modern box with rounded corners."""
+def draw_box(stdscr: curses.window, y: int, x: int, height: int, width: int, title: str = "", style: str = "default") -> None:
+    """Draw a modern box with rounded corners and optional styles."""
     try:
-        # Top border
-        safe_addstr(stdscr, y, x, BOX_CHARS["tl"], COLORS["border"])
-        safe_addstr(stdscr, y, x + 1, BOX_CHARS["h"] * (width - 2), COLORS["border"])
-        safe_addstr(stdscr, y, x + width - 1, BOX_CHARS["tr"], COLORS["border"])
+        # Style variations
+        if style == "double":
+            chars = {"tl": "╔", "tr": "╗", "bl": "╚", "br": "╝", "h": "═", "v": "║"}
+            border_color = COLORS["success"]
+        elif style == "bold":
+            chars = {"tl": "┏", "tr": "┓", "bl": "┗", "br": "┛", "h": "━", "v": "┃"}
+            border_color = COLORS["field_label"]
+        elif style == "dotted":
+            chars = {"tl": "┌", "tr": "┐", "bl": "└", "br": "┘", "h": "┄", "v": "┊"}
+            border_color = COLORS["border"]
+        else:  # default rounded
+            chars = BOX_CHARS
+            border_color = COLORS["border"]
 
-        # Title if provided (left-aligned)
+        # Top border
+        safe_addstr(stdscr, y, x, chars["tl"], border_color)
+        safe_addstr(stdscr, y, x + 1, chars["h"] * (width - 2), border_color)
+        safe_addstr(stdscr, y, x + width - 1, chars["tr"], border_color)
+
+        # Title if provided (left-aligned with fancy styling)
         if title:
-            title_text = f" {title} "
-            title_pos = x + 2  # Left-align with small padding
+            title_text = f" ✦ {title} ✦ "
+            title_pos = x + 2
             safe_addstr(stdscr, y, title_pos, title_text, COLORS["section"])
 
         # Side borders
         for i in range(1, height - 1):
-            safe_addstr(stdscr, y + i, x, BOX_CHARS["v"], COLORS["border"])
-            safe_addstr(stdscr, y + i, x + width - 1, BOX_CHARS["v"], COLORS["border"])
+            safe_addstr(stdscr, y + i, x, chars["v"], border_color)
+            safe_addstr(stdscr, y + i, x + width - 1, chars["v"], border_color)
 
         # Bottom border
-        safe_addstr(stdscr, y + height - 1, x, BOX_CHARS["bl"], COLORS["border"])
-        safe_addstr(stdscr, y + height - 1, x + 1, BOX_CHARS["h"] * (width - 2), COLORS["border"])
-        safe_addstr(stdscr, y + height - 1, x + width - 1, BOX_CHARS["br"], COLORS["border"])
+        safe_addstr(stdscr, y + height - 1, x, chars["bl"], border_color)
+        safe_addstr(stdscr, y + height - 1, x + 1, chars["h"] * (width - 2), border_color)
+        safe_addstr(stdscr, y + height - 1, x + width - 1, chars["br"], border_color)
     except curses.error:
         pass
 
-def draw_header(stdscr: curses.window, show_init: bool) -> None:
+def draw_header(stdscr: curses.window, show_init: bool, animation_frame: int = 0) -> None:
+    """Draw animated header with pulsing effects."""
     max_y, max_x = stdscr.getmaxyx()
     if max_y <= 2:
         return
 
+    # Animated pulse effect for the icon
+    pulse_icon = PULSE_FRAMES[animation_frame % len(PULSE_FRAMES)] if animation_frame else ""
+
     # Modern minimalist header - left aligned
-    title = f"{ICONS['php']} phpup"
+    title = f"{pulse_icon} {ICONS['php']} phpup {pulse_icon}"
     version = ""
     tagline = "FrankenPHP Development Server"
 
-    # Status indicators
+    # Status indicators with animation
     status_items = []
     if show_init:
-        status_items.append("● Config Required")
+        spinner = SPINNER_FRAMES[animation_frame % len(SPINNER_FRAMES)]
+        status_items.append(f"{spinner} Config Required")
     else:
-        status_items.append("● Ready")
+        status_items.append("✓ Ready")
 
     # Draw clean header without background
-    safe_addstr(stdscr, 0, 2, title, COLORS["title"])
+    safe_addstr(stdscr, 0, 2, title, COLORS["title"] | curses.A_BOLD)
     safe_addstr(stdscr, 0, len(title) + 3, version, COLORS["status"])
     safe_addstr(stdscr, 0, len(title) + len(version) + 5, f"— {tagline}", COLORS["field_value"])
 
-    # Right-aligned status
+    # Right-aligned status with pulsing effect
     if status_items:
         status_text = " ".join(status_items)
         status_x = max_x - len(status_text) - 2
@@ -630,9 +681,13 @@ def draw_header(stdscr: curses.window, show_init: bool) -> None:
             status_color = COLORS["warning"] if show_init else COLORS["success"]
             safe_addstr(stdscr, 0, status_x, status_text, status_color)
 
-    # Simple separator line
+    # Gradient-like separator line with special characters
     if max_y > 1 and max_x > 1:
-        separator = "─" * (max_x - 1)
+        # Create a fancy separator with gradient effect
+        left_cap = "╾"
+        right_cap = "╼"
+        middle = "━" * (max_x - 3)
+        separator = left_cap + middle + right_cap
         safe_addstr(stdscr, 1, 0, separator, COLORS["border"])
 
 
@@ -1332,6 +1387,58 @@ def shlex_escape(value: str) -> str:
     return "'" + value.replace("'", "'\\''") + "'"
 
 
+def draw_progress_bar(stdscr: curses.window, row: int, col: int, width: int, percent: float, style: str = "default") -> None:
+    """Draw a modern progress bar with optional styles."""
+    try:
+        # Clamp percent between 0 and 100
+        percent = max(0, min(100, percent))
+        filled_width = int((width - 2) * (percent / 100))
+
+        # Different style variations
+        if style == "blocks":
+            fill_char = "█"
+            empty_char = "░"
+            left_cap = "▕"
+            right_cap = "▏"
+        elif style == "dots":
+            fill_char = "●"
+            empty_char = "○"
+            left_cap = "["
+            right_cap = "]"
+        elif style == "arrows":
+            fill_char = "▶"
+            empty_char = "▷"
+            left_cap = "["
+            right_cap = "]"
+        else:  # default
+            fill_char = "━"
+            empty_char = "─"
+            left_cap = "╾"
+            right_cap = "╼"
+
+        # Build progress bar
+        filled = fill_char * filled_width
+        empty = empty_char * (width - 2 - filled_width)
+        bar = f"{left_cap}{filled}{empty}{right_cap}"
+
+        # Color based on progress
+        if percent < 30:
+            color = COLORS["error"]
+        elif percent < 70:
+            color = COLORS["warning"]
+        else:
+            color = COLORS["success"]
+
+        safe_addstr(stdscr, row, col, bar, color)
+
+        # Add percentage text
+        percent_text = f" {int(percent)}% "
+        text_col = col + (width // 2) - (len(percent_text) // 2)
+        safe_addstr(stdscr, row, text_col, percent_text, color | curses.A_BOLD)
+    except curses.error:
+        pass
+
+
 def render_project_info_adaptive(stdscr: curses.window, row: int, width: int, max_height: int) -> int:
     """Render project information with adaptive height."""
     project_info = get_project_info()
@@ -1653,6 +1760,8 @@ def curses_main(stdscr: curses.window) -> None:
     fields = cfg.all_fields()
     selected_index = 0
     action_regions: List[ActionRegion] = []
+    animation_frame = 0
+    hovered_action = None  # Track which action button is hovered
 
     def handle_mouse_click(mouse_y: int, mouse_x: int) -> Optional[str]:
         """Handle mouse click and return the corresponding key if clicked on an action."""
@@ -1661,13 +1770,21 @@ def curses_main(stdscr: curses.window) -> None:
                 return region.key
         return None
 
+    def handle_mouse_hover(mouse_y: int, mouse_x: int) -> Optional[str]:
+        """Check if mouse is hovering over an action button."""
+        for region in action_regions:
+            if region.contains_click(mouse_y, mouse_x):
+                return region.action
+        return None
+
     while True:
         stdscr.erase()
         max_y, max_x = stdscr.getmaxyx()
         show_init = init_available()
 
-        # Draw header
-        draw_header(stdscr, show_init)
+        # Draw animated header
+        draw_header(stdscr, show_init, animation_frame)
+        animation_frame += 1
 
         # Calculate layout dimensions with improved responsiveness
         if max_x < 60:
@@ -1762,17 +1879,26 @@ def curses_main(stdscr: curses.window) -> None:
                 button_start = actions_x + 3  # Modest left padding
                 button_end = button_start + len(action_text) + 1
 
-                # Draw a subtle button background (using reverse for hover effect)
-                button_bg = " " + action_text + " "
-                safe_addstr(stdscr, action_y, button_start, button_bg, color)
+                # Check if this button is hovered
+                is_hovered = (hovered_action == desc)
+
+                # Draw button with hover effect
+                if is_hovered:
+                    # Highlighted hover state with inverted colors
+                    button_bg = f"▶ {action_text} ◀"
+                    safe_addstr(stdscr, action_y, button_start - 1, button_bg, color | curses.A_REVERSE | curses.A_BOLD)
+                else:
+                    # Normal state
+                    button_bg = " " + action_text + " "
+                    safe_addstr(stdscr, action_y, button_start, button_bg, color)
 
                 # Track this region for mouse clicks
                 action_regions.append(ActionRegion(
                     key=key,
                     action=desc,
                     row=action_y,
-                    col_start=button_start,
-                    col_end=button_end
+                    col_start=button_start - 1,
+                    col_end=button_end + 1
                 ))
                 action_y += 1
 
@@ -1816,6 +1942,10 @@ def curses_main(stdscr: curses.window) -> None:
         if key == curses.KEY_MOUSE:
             try:
                 _, mouse_x, mouse_y, _, mouse_state = curses.getmouse()
+
+                # Update hover state
+                hovered_action = handle_mouse_hover(mouse_y, mouse_x)
+
                 if mouse_state & curses.BUTTON1_CLICKED:
                     # Handle action button clicks
                     clicked_key = handle_mouse_click(mouse_y, mouse_x)
