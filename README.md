@@ -45,6 +45,7 @@ Other Options:
 - `--init` — Generate .phpup/ configuration files and exit
 - `--install` — Install phpup and auto-install FrankenPHP to /usr/local/bin/ for system-wide use
 - `--build-php` — Interactive helper to build custom FrankenPHP with additional extensions
+- `--tui` — Launch the interactive curses-based frontend
 - `--list` — List running FrankenPHP instances for the current user
 - `--dry-run` — Print the resolved command and exit
 - `--quiet` — Reduce output
@@ -151,7 +152,7 @@ sudo ./phpup --install
 ./phpup --open
 
 # Interactive TUI interface
-phpui
+./phpup --tui
 
 # Development with file watching (auto-reload on changes)
 ./phpup --watch --verbose
@@ -164,7 +165,7 @@ phpui
 
 # Interactive TUI frontend
 
-There is also a lightweight curses-based helper in `tui/phpup_tui.py`:
+There is also a lightweight curses-based helper in `tui/phpup_tui.py`. Launch it directly with `./phpup --tui` or run the script yourself:
 
 **Requirements:**
 - Python 3.6+ (uses built-in libraries only: curses, subprocess, os, sys, dataclasses)
@@ -172,6 +173,9 @@ There is also a lightweight curses-based helper in `tui/phpup_tui.py`:
 
 **Usage:**
 ```bash
+# Launch via phpup
+./phpup --tui
+
 # Run from the project directory
 python3 tui/phpup_tui.py
 

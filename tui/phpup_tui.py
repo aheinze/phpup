@@ -37,6 +37,7 @@ ICONS = {
     "server": "🐘",
     "host": "🌐",
     "port": "🔌",
+    "domain": "🌍",
     "folder": "📁",
     "php": "🐘",
     "https": "🔒",
@@ -203,6 +204,7 @@ class Field:
         icon_map = {
             "Host": ICONS["host"],
             "Port": ICONS["port"],
+            "Domain": ICONS["domain"],
             "Docroot": ICONS["folder"],
             "PHP Threads": ICONS["php"],
             "HTTPS Mode": ICONS["https"],
@@ -361,6 +363,7 @@ class ScrollablePanel:
 class Config:
     host: TextField
     port: TextField
+    domain: TextField
     docroot: TextField
     php_threads: TextField
     https: ChoiceField
@@ -376,6 +379,7 @@ class Config:
         return [
             self.host,
             self.port,
+            self.domain,
             self.docroot,
             self.php_threads,
             self.https,
@@ -390,6 +394,8 @@ class Config:
 
     def build_command(self, dry_run: bool = False) -> List[str]:
         cmd: List[str] = [PHPUP_PATH]
+        if self.domain.value:
+            cmd += ["--domain", self.domain.value]
         if self.host.value:
             cmd += ["--host", self.host.value]
         if self.port.value:
@@ -426,12 +432,17 @@ class Config:
 
     def build_init_command(self) -> List[str]:
         cmd: List[str] = [PHPUP_PATH, "--init"]
+        if self.domain.value:
+            cmd += ["--domain", self.domain.value]
         if self.docroot.value:
             # Convert relative paths to absolute paths for consistency
             docroot_path = self.docroot.value
             if not os.path.isabs(docroot_path):
                 docroot_path = os.path.abspath(docroot_path)
             cmd += ["--docroot", docroot_path]
+        # Always add --save when running --init with domain to persist configuration
+        if self.domain.value:
+            cmd.append("--save")
         return cmd
 
     def build_list_command(self) -> List[str]:
@@ -1745,6 +1756,7 @@ def curses_main(stdscr: curses.window) -> None:
     cfg = Config(
         host=TextField("Host", "127.0.0.1"),
         port=TextField("Port", "8000"),
+        domain=TextField("Domain", ""),
         docroot=TextField("Docroot", detected_docroot, auto_detected=bool(detected_docroot)),
         php_threads=TextField("PHP Threads", "auto"),
         https=ChoiceField("HTTPS Mode", ["off", "local", "on"], 0),
@@ -1818,7 +1830,7 @@ def curses_main(stdscr: curses.window) -> None:
 
         # Draw section headers
         safe_addstr(stdscr, config_start_row + 1, 4, "── Basic Settings ──", COLORS["section"])
-        safe_addstr(stdscr, config_start_row + 6, 4, "── Advanced Options ──", COLORS["section"])
+        safe_addstr(stdscr, config_start_row + 7, 4, "── Advanced Options ──", COLORS["section"])
 
         # Render fields with modest spacing
         field_start_row = config_start_row + 2
