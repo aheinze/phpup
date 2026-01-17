@@ -27,6 +27,7 @@ const emit = defineEmits<{
   moveProject: [project: Project, groupId: string | undefined];
   reorderProjects: [fromId: string, toId: string];
   reorderGroups: [fromId: string, toId: string];
+  openTools: [];
 }>();
 
 // Resize state
@@ -271,6 +272,13 @@ function handleRenameGroup(group: Group, newName: string) {
           <path d="M2 6h12"/>
         </svg>
       </button>
+      <div class="footer-spacer"></div>
+      <button class="icon-btn" @click="emit('openTools')" title="Tools">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M10 2a4 4 0 00-3.8 5.2L2 11.5V14h2.5l4.3-4.2A4 4 0 1010 2z"/>
+          <circle cx="11" cy="5" r="1" fill="currentColor"/>
+        </svg>
+      </button>
     </div>
   </aside>
 
@@ -362,7 +370,12 @@ function handleRenameGroup(group: Group, newName: string) {
   border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
+  gap: 4px;
   flex-shrink: 0;
+}
+
+.footer-spacer {
+  flex: 1;
 }
 
 .group {
@@ -414,7 +427,7 @@ function handleRenameGroup(group: Group, newName: string) {
 }
 
 .group-projects {
-  margin-left: 8px;
+  margin-left: 24px;
 }
 
 .delete-btn {

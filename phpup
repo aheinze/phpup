@@ -44,7 +44,7 @@ INSTALL_MODE=0
 BUILD_PHP_MODE=0
 LIST_MODE=0
 STATS_MODE=0
-TUI_MODE=0
+FORCE_MODE=0
 
 # Configuration file path
 CONFIG_FILE=".phpup/config"
@@ -171,19 +171,20 @@ Development & Debug:
 
 Other Options:
   --init                Generate .phpup/ config files and exit
-  --install             Install phpup and TUI to /usr/local/bin/ for system-wide use
+                        (creates Caddyfiles, php.ini, configures error/access logs)
+  --force               Overwrite existing config files (use with --init)
+  --install             Install phpup to /usr/local/bin/ for system-wide use
   --build-php           Interactive helper to build custom FrankenPHP with additional extensions
   --stop                Stop all running FrankenPHP processes and exit
   --list                List running FrankenPHP instances for current user
   --stats               Show detailed statistics (uptime, memory, threads) for running processes
-  --tui                 Launch interactive TUI interface and exit
   --dry-run             Print the computed command and exit
   --quiet               Reduce output
   -h, --help            Show this help
   --                    Pass remaining args to FrankenPHP
 
 Environment variables available to Caddyfile:
-  HOST, PORT, DOCROOT, SERVER_NAME, SERVER_ROOT, PHP_THREADS, MAX_WAIT_TIME, WORKER_FILE
+  HOST, PORT, DOCROOT, SERVER_NAME, SERVER_ROOT, PHP_THREADS, MAX_WAIT_TIME, WORKER_FILE, PHPUP_DIR
 
   Generated Caddyfiles use these variables (e.g., {\$HOST}:{\$PORT}) so you can
   override them with command-line options even after generation.
@@ -192,13 +193,8 @@ Examples:
   # Initialize configuration files for customization
   ./phpup --init
 
-  # Install phpup system-wide (includes TUI)
+  # Install phpup system-wide
   sudo ./phpup --install
-
-  # Use the interactive TUI
-  ./phpup --tui
-  # Or run the Python script directly
-  python3 tui/phpup_tui.py  # or 'phpui' if installed globally
 
   # Build custom FrankenPHP with Xdebug
   ./phpup --build-php
@@ -227,47 +223,6 @@ EOF
 }
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
-
-launch_tui() {
-  local python_cmd=""
-
-  if command_exists python3; then
-    python_cmd="python3"
-  elif command_exists python; then
-    python_cmd="python"
-  else
-    err "Python 3 is required to run the TUI (python3 command not found)"
-    return 1
-  fi
-
-  local script_path
-  script_path="$(realpath "$0" 2>/dev/null || echo "$0")"
-  local script_dir
-  script_dir="$(dirname "$script_path")"
-
-  local tui_script=""
-
-  if [ -f "$script_dir/tui/phpup_tui.py" ]; then
-    tui_script="$script_dir/tui/phpup_tui.py"
-  elif [ -f "$script_dir/../tui/phpup_tui.py" ]; then
-    tui_script="$script_dir/../tui/phpup_tui.py"
-  fi
-
-  if [ -n "$tui_script" ]; then
-    log "🎛  Launching phpup TUI"
-    "$python_cmd" "$tui_script"
-    return $?
-  fi
-
-  if command_exists phpui; then
-    log "🎛  Launching phpup TUI (phpui)"
-    phpui
-    return $?
-  fi
-
-  err "phpup TUI not found. Install it with '--install' or keep 'tui/phpup_tui.py' next to phpup."
-  return 1
-}
 
 # Production hardening checks
 security_checks() {
@@ -339,6 +294,14 @@ load_config() {
 
     # Only set if not already set by command-line args
     case "$key" in
+      HOST)
+        [ "$HOST" = "127.0.0.1" ] && HOST="$value"
+        debug "Loaded HOST=$value from config"
+        ;;
+      PORT)
+        [ "$START_PORT" = "8000" ] && START_PORT="$value"
+        debug "Loaded PORT=$value from config"
+        ;;
       DOMAIN)
         [ -z "$DOMAIN" ] && DOMAIN="$value"
         debug "Loaded DOMAIN=$value from config"
@@ -400,9 +363,22 @@ infer_domain() {
   echo "${folder_name}.test"
 }
 
+# Sanitize and validate domain name
+sanitize_domain() {
+  local domain="$1"
+  # Remove any dangerous characters - only allow alphanumeric, dash, and dot
+  echo "$domain" | tr -cd 'a-z0-9.-' | tr '[:upper:]' '[:lower:]'
+}
+
 # Validate domain name
 validate_domain() {
   local domain="$1"
+
+  # Block any potentially dangerous characters (extra safety check)
+  if [[ "$domain" =~ [\*\;\$\`\{\}\|\<\>\"\'] ]]; then
+    return 1
+  fi
+
   # Allow .test, .local, .localhost TLDs and standard domain format
   if [[ "$domain" =~ ^[a-z0-9][a-z0-9\.-]*[a-z0-9]\.(test|local|localhost)$ ]] || \
      [[ "$domain" =~ ^[a-z0-9][a-z0-9\.-]*\.[a-z]{2,}$ ]]; then
@@ -758,6 +734,8 @@ while [ $# -gt 0 ]; do
       SAVE_MODE=1; shift;;
     --init)
       INIT_MODE=1; shift;;
+    --force)
+      FORCE_MODE=1; shift;;
     --install)
       INSTALL_MODE=1; shift;;
     --build-php)
@@ -768,8 +746,6 @@ while [ $# -gt 0 ]; do
       LIST_MODE=1; shift;;
     --stats)
       STATS_MODE=1; shift;;
-    --tui)
-      TUI_MODE=1; shift;;
     --dry-run)
       DRY_RUN=1; shift;;
     --quiet)
@@ -1073,15 +1049,6 @@ if [ "$STATS_MODE" -eq 1 ]; then
   exit 0
 fi
 
-# Handle TUI mode
-if [ "$TUI_MODE" -eq 1 ]; then
-  if launch_tui; then
-    exit 0
-  else
-    exit 1
-  fi
-fi
-
 # Handle --install mode
 if [ "$INSTALL_MODE" -eq 1 ]; then
   log "📦 Installing phpup to /usr/local/bin/"
@@ -1138,32 +1105,6 @@ if [ "$INSTALL_MODE" -eq 1 ]; then
   }
 
 
-  # Install TUI if it exists
-  TUI_PATH="$(dirname "$SCRIPT_PATH")/tui/phpup_tui.py"
-  if [ -f "$TUI_PATH" ]; then
-    log "📱 Installing phpup TUI to /usr/local/bin/phpui"
-
-    # Copy TUI script
-    cp "$TUI_PATH" /usr/local/bin/phpui || {
-      log "⚠️  Failed to copy TUI to /usr/local/bin/, skipping..."
-    }
-
-    # Make it executable
-    if [ -f /usr/local/bin/phpui ]; then
-      chmod +x /usr/local/bin/phpui || {
-        log "⚠️  Failed to make phpui executable"
-      }
-
-      # Update the shebang line and PHPUP_PATH for global installation
-      sed -i '1s|.*|#!/usr/bin/env python3|' /usr/local/bin/phpui
-      sed -i 's|PHPUP_PATH = os.path.join(SCRIPT_ROOT, "phpup")|PHPUP_PATH = "/usr/local/bin/phpup"|' /usr/local/bin/phpui
-
-      log "✅ TUI installed successfully - run 'phpui' from anywhere"
-    fi
-  else
-    log "ℹ️  TUI not found at $TUI_PATH, skipping TUI installation"
-  fi
-
   # Check if FrankenPHP is available
   if ! command_exists frankenphp; then
     log "🚀 FrankenPHP not found, attempting to install..."
@@ -1171,16 +1112,44 @@ if [ "$INSTALL_MODE" -eq 1 ]; then
     # Download and install FrankenPHP
     if command_exists curl; then
       log "   Downloading FrankenPHP installer..."
-      if curl -fsSL https://frankenphp.dev/install.sh | sh; then
-        log "   Moving frankenphp to /usr/local/bin/..."
-        if [ -f "./frankenphp" ]; then
-          mv ./frankenphp /usr/local/bin/ && chmod +x /usr/local/bin/frankenphp
-          log "✅ FrankenPHP installed successfully"
+
+      # Create temp file for installer (safer than piping to sh)
+      INSTALLER_TMP=$(mktemp -t phpup-frankenphp-installer.XXXXXX) || {
+        err "Failed to create temp file for installer"
+        exit 1
+      }
+      trap "rm -f '$INSTALLER_TMP'" EXIT
+
+      # Download installer script first
+      if curl -fsSL https://frankenphp.dev/install.sh -o "$INSTALLER_TMP"; then
+        chmod +x "$INSTALLER_TMP"
+        log "   Running FrankenPHP installer..."
+
+        if sh "$INSTALLER_TMP"; then
+          rm -f "$INSTALLER_TMP"
+
+          if [ -f "./frankenphp" ]; then
+            log "   Moving frankenphp to /usr/local/bin/..."
+            mv ./frankenphp /usr/local/bin/ && chmod +x /usr/local/bin/frankenphp
+
+            # Verify the binary works
+            if /usr/local/bin/frankenphp version >/dev/null 2>&1; then
+              log "✅ FrankenPHP installed and verified successfully"
+            else
+              log "⚠️  FrankenPHP installed but verification failed"
+              log "   The binary may be corrupted. Try reinstalling manually: https://frankenphp.dev/docs/install/"
+            fi
+          else
+            log "⚠️  FrankenPHP download succeeded but binary not found in current directory"
+            log "   You may need to install FrankenPHP manually: https://frankenphp.dev/docs/install/"
+          fi
         else
-          log "⚠️  FrankenPHP download succeeded but binary not found in current directory"
-          log "   You may need to install FrankenPHP manually: https://frankenphp.dev/docs/install/"
+          rm -f "$INSTALLER_TMP"
+          log "⚠️  Failed to run FrankenPHP installer"
+          log "   Please install FrankenPHP manually: https://frankenphp.dev/docs/install/"
         fi
       else
+        rm -f "$INSTALLER_TMP"
         log "⚠️  Failed to download FrankenPHP installer"
         log "   Please install FrankenPHP manually: https://frankenphp.dev/docs/install/"
       fi
@@ -1304,10 +1273,9 @@ if [ "$BUILD_PHP_MODE" -eq 1 ]; then
   log "🏗️  Preparing custom build with PHP $php_version and extensions: $extensions"
   log ""
 
-  # Create build directory
-  BUILD_DIR="/tmp/frankenphp-custom-build"
-  rm -rf "$BUILD_DIR"
-  mkdir -p "$BUILD_DIR"
+  # Create secure build directory
+  BUILD_DIR=$(mktemp -d -t frankenphp-custom-build.XXXXXX)
+  chmod 700 "$BUILD_DIR"
   cd "$BUILD_DIR" || exit 1
 
   log "📥 Cloning FrankenPHP repository..."
@@ -1369,9 +1337,9 @@ if [ "$BUILD_PHP_MODE" -eq 1 ]; then
       log ""
       log "📦 Extracting binary..."
 
-      # Create extraction directory
-      EXTRACT_DIR="/tmp/frankenphp-custom-build"
-      mkdir -p "$EXTRACT_DIR"
+      # Create secure extraction directory
+      EXTRACT_DIR=$(mktemp -d -t frankenphp-extract.XXXXXX)
+      chmod 700 "$EXTRACT_DIR"
 
       # Extract the binary from the built image using the official method
       ARCH=$(uname -m)
@@ -1417,6 +1385,9 @@ fi
 
 if [ "$INIT_MODE" -eq 1 ]; then
   log "⚙️  Initializing .phpup/ configuration directory..."
+  if [ "$FORCE_MODE" -eq 1 ]; then
+    log "   (--force enabled: existing files will be overwritten)"
+  fi
 
   # Create directory
   mkdir -p .phpup
@@ -1440,9 +1411,9 @@ if [ "$INIT_MODE" -eq 1 ]; then
   generate_php_config() {
     local php_ini_file=".phpup/php.ini"
 
-    if [ -f "$php_ini_file" ]; then
+    if [ -f "$php_ini_file" ] && [ "$FORCE_MODE" -ne 1 ]; then
       log "PHP configuration already exists: $php_ini_file"
-      log "Use --force to overwrite existing files (not implemented yet)"
+      log "Use --force to overwrite existing files"
       return 0
     fi
 
@@ -1560,9 +1531,9 @@ EOF
     local mode="$1"
     local caddyfile_path=".phpup/Caddyfile.$mode"
 
-    if [ -f "$caddyfile_path" ]; then
+    if [ -f "$caddyfile_path" ] && [ "$FORCE_MODE" -ne 1 ]; then
       log "Caddyfile already exists: $caddyfile_path"
-      log "Use --force to overwrite existing files (not implemented yet)"
+      log "Use --force to overwrite existing files"
       return 0
     fi
 
@@ -1584,6 +1555,7 @@ EOF
       display_errors On
       error_reporting E_ALL
       log_errors On
+      error_log {\$PHPUP_DIR}/php_errors.log
     }
   }
   servers {
@@ -1629,6 +1601,14 @@ EOF
   header {
     X-Powered-By "FrankenPHP Classic"
   }
+
+  log {
+    output file {\$PHPUP_DIR}/access.log {
+      roll_size 10mb
+      roll_keep 3
+    }
+    format json
+  }
 }
 EOF
     else  # worker mode
@@ -1656,6 +1636,7 @@ EOF
       display_errors On
       error_reporting E_ALL
       log_errors On
+      error_log {\$PHPUP_DIR}/php_errors.log
     }
     worker {
       file "{\$WORKER_FILE}"
@@ -1676,6 +1657,14 @@ EOF
   file_server
   header {
     X-Powered-By "FrankenPHP Worker"
+  }
+
+  log {
+    output file {\$PHPUP_DIR}/access.log {
+      roll_size 10mb
+      roll_keep 3
+    }
+    format json
   }
 }
 EOF
@@ -1710,6 +1699,10 @@ EOF
   log "   Caddyfile.classic - Classic mode template (with inline php_ini)"
   log "   Caddyfile.worker  - Worker mode template (with inline php_ini)"
   log ""
+  log "📊 Log files (created at runtime):"
+  log "   php_errors.log    - PHP error log (configured in php_ini)"
+  log "   access.log        - HTTP access log (JSON format, 10MB rotation)"
+  log ""
 
   # Save configuration if requested or if domain is set
   if [ "$SAVE_MODE" -eq 1 ] || [ -n "$DOMAIN" ]; then
@@ -1720,6 +1713,7 @@ EOF
   log "   1. Edit .phpup/Caddyfile to customize server configuration"
   log "   2. Optionally tweak inline php_ini blocks in the templates"
   log "   3. Run './phpup' to start the server with your custom config"
+  log "   4. Check .phpup/php_errors.log for PHP errors"
   log ""
   exit 0
 fi
@@ -1941,13 +1935,15 @@ export SERVER_ROOT="${DOCROOT}"
 export DOCUMENT_ROOT="${DOCROOT}"
 # Worker file for worker mode templates
 export WORKER_FILE="${WORKER_FILE}"
+# Config directory for logs and certs
+export PHPUP_DIR=".phpup"
 
 if [ -n "$CADDYFILE" ]; then
   MODE="caddyfile"
   # With custom Caddyfile: compute free port and export env vars for placeholders
   FINAL_CADDYFILE="$CADDYFILE"
   log "📄 Using custom Caddyfile: $FINAL_CADDYFILE"
-  log "🌍 Env available to Caddyfile: HOST=$HOST PORT=$PORT DOCROOT=$DOCROOT SERVER_NAME=$SERVER_NAME SERVER_ROOT=$SERVER_ROOT WORKER_FILE=$WORKER_FILE"
+  log "🌍 Env available to Caddyfile: HOST=$HOST PORT=$PORT DOCROOT=$DOCROOT SERVER_NAME=$SERVER_NAME SERVER_ROOT=$SERVER_ROOT WORKER_FILE=$WORKER_FILE PHPUP_DIR=$PHPUP_DIR"
   if frankenphp run --help >/dev/null 2>&1; then
     CMD=(frankenphp run --config "$FINAL_CADDYFILE")
   else
@@ -2015,6 +2011,7 @@ else
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      display_errors On"
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      error_reporting E_ALL"
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      log_errors On"
+    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      error_log {\$PHPUP_DIR}/php_errors.log"
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    }"
 
     # Thread configuration for workers
@@ -2073,7 +2070,7 @@ else
         # Custom domain with HTTPS - include computed port
         SITE_CONFIG="https://${ESCAPED_DOMAIN}:${PORT} {"
         # Add TLS directive to use mkcert certificates
-        SITE_CONFIG="${SITE_CONFIG}\n  tls .phpup/certs/${ESCAPED_DOMAIN}.pem .phpup/certs/${ESCAPED_DOMAIN}-key.pem"
+        SITE_CONFIG="${SITE_CONFIG}\n  tls {\\\$PHPUP_DIR}/certs/${ESCAPED_DOMAIN}.pem {\\\$PHPUP_DIR}/certs/${ESCAPED_DOMAIN}-key.pem"
       elif [ "$HTTPS_MODE" = "off" ]; then
         # Custom domain with HTTP
         SITE_CONFIG="http://${ESCAPED_DOMAIN}:${PORT} {"
@@ -2115,7 +2112,14 @@ else
     # Headers for worker mode
     SITE_CONFIG="${SITE_CONFIG}\n  header {\n    X-Powered-By \"FrankenPHP Worker\"\n  }"
 
-    # Logging
+    # Logging - always log to file, add console output in verbose mode
+    SITE_CONFIG="${SITE_CONFIG}\n  log {"
+    SITE_CONFIG="${SITE_CONFIG}\n    output file {\$PHPUP_DIR}/access.log {"
+    SITE_CONFIG="${SITE_CONFIG}\n      roll_size 10mb"
+    SITE_CONFIG="${SITE_CONFIG}\n      roll_keep 3"
+    SITE_CONFIG="${SITE_CONFIG}\n    }"
+    SITE_CONFIG="${SITE_CONFIG}\n    format json"
+    SITE_CONFIG="${SITE_CONFIG}\n  }"
     if [ "$VERBOSE" -eq 1 ]; then
       SITE_CONFIG="${SITE_CONFIG}\n  log {\n    output stdout\n    format console\n    level DEBUG\n  }"
     fi
@@ -2154,6 +2158,7 @@ else
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      display_errors On"
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      error_reporting E_ALL"
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      log_errors On"
+    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      error_log {\$PHPUP_DIR}/php_errors.log"
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    }"
 
     # Thread configuration for classic mode
@@ -2204,7 +2209,7 @@ else
         # Custom domain with HTTPS - include computed port
         SITE_CONFIG="https://${ESCAPED_DOMAIN}:${PORT} {"
         # Add TLS directive to use mkcert certificates
-        SITE_CONFIG="${SITE_CONFIG}\n  tls .phpup/certs/${ESCAPED_DOMAIN}.pem .phpup/certs/${ESCAPED_DOMAIN}-key.pem"
+        SITE_CONFIG="${SITE_CONFIG}\n  tls {\\\$PHPUP_DIR}/certs/${ESCAPED_DOMAIN}.pem {\\\$PHPUP_DIR}/certs/${ESCAPED_DOMAIN}-key.pem"
       elif [ "$HTTPS_MODE" = "off" ]; then
         # Custom domain with HTTP
         SITE_CONFIG="http://${ESCAPED_DOMAIN}:${PORT} {"
@@ -2269,7 +2274,14 @@ else
     # Headers for classic mode
     SITE_CONFIG="${SITE_CONFIG}\n  header {\n    X-Powered-By \"FrankenPHP Classic\"\n  }"
 
-    # Logging
+    # Logging - always log to file, add console output in verbose mode
+    SITE_CONFIG="${SITE_CONFIG}\n  log {"
+    SITE_CONFIG="${SITE_CONFIG}\n    output file {\$PHPUP_DIR}/access.log {"
+    SITE_CONFIG="${SITE_CONFIG}\n      roll_size 10mb"
+    SITE_CONFIG="${SITE_CONFIG}\n      roll_keep 3"
+    SITE_CONFIG="${SITE_CONFIG}\n    }"
+    SITE_CONFIG="${SITE_CONFIG}\n    format json"
+    SITE_CONFIG="${SITE_CONFIG}\n  }"
     if [ "$VERBOSE" -eq 1 ]; then
       SITE_CONFIG="${SITE_CONFIG}\n  log {\n    output stdout\n    format console\n    level DEBUG\n  }"
     fi
@@ -2278,7 +2290,10 @@ else
   fi
 
   # Write the Caddyfile
-  echo -e "${GLOBAL_CONFIG}\n\n${SITE_CONFIG}" > "$FINAL_CADDYFILE"
+  if ! echo -e "${GLOBAL_CONFIG}\n\n${SITE_CONFIG}" > "$FINAL_CADDYFILE"; then
+    err "Failed to write Caddyfile to $FINAL_CADDYFILE"
+    exit 1
+  fi
   MODE="generated"
 
   # Build command
@@ -2436,43 +2451,67 @@ else
 fi
 FRANKENPHP_PID=$!
 
-# Verify process started successfully
-sleep 0.5
-if ! kill -0 "$FRANKENPHP_PID" 2>/dev/null; then
-  err "Failed to start FrankenPHP"
-
-  # Try to get error details
-  if [ -f ".phpup/php_errors.log" ]; then
-    err "Recent PHP errors:"
-    tail -5 ".phpup/php_errors.log" 2>/dev/null | while read -r line; do
-      err "  $line"
-    done
+# Verify process started successfully with retry
+STARTUP_RETRIES=5
+STARTUP_DELAY=0.5
+for i in $(seq 1 $STARTUP_RETRIES); do
+  sleep $STARTUP_DELAY
+  if kill -0 "$FRANKENPHP_PID" 2>/dev/null; then
+    break
   fi
+  if [ "$i" -eq "$STARTUP_RETRIES" ]; then
+    err "Failed to start FrankenPHP"
 
-  exit 1
-fi
+    # Try to get error details
+    if [ -f ".phpup/php_errors.log" ]; then
+      err "Recent PHP errors:"
+      tail -5 ".phpup/php_errors.log" 2>/dev/null | while read -r line; do
+        err "  $line"
+      done
+    fi
+
+    exit 1
+  fi
+done
 
 log "🧟 FrankenPHP started with PID: $FRANKENPHP_PID"
 debug "Server should be accessible at: ${PROTOCOL}://$HOST:$PORT"
 
-# Open browser if requested
-if [ "$OPEN_BROWSER" -eq 1 ]; then
-  # Wait a moment for server to be ready
-  sleep 1
-  open_browser "${PROTOCOL}://$HOST:$PORT"
-fi
+# Health check with retries (runs always, output only in verbose mode)
+if command_exists curl; then
+  HEALTH_RETRIES=5
+  HEALTH_DELAY=1
+  HEALTH_OK=0
 
-# Production monitoring - basic health check
-if [ "$VERBOSE" -eq 1 ] && command_exists curl; then
-  # Wait a moment for server to be ready
-  sleep 2
+  for i in $(seq 1 $HEALTH_RETRIES); do
+    sleep $HEALTH_DELAY
+    if curl -s -f --connect-timeout 3 "${PROTOCOL}://$HOST:$PORT" >/dev/null 2>&1; then
+      HEALTH_OK=1
+      break
+    fi
+    # Check if process died during health check
+    if ! kill -0 "$FRANKENPHP_PID" 2>/dev/null; then
+      err "FrankenPHP process died unexpectedly"
+      if [ -f ".phpup/php_errors.log" ]; then
+        err "Recent PHP errors:"
+        tail -5 ".phpup/php_errors.log" 2>/dev/null | while read -r line; do
+          err "  $line"
+        done
+      fi
+      exit 1
+    fi
+  done
 
-  # Try a basic health check
-  if curl -s -f --connect-timeout 5 "${PROTOCOL}://$HOST:$PORT" >/dev/null 2>&1; then
+  if [ "$HEALTH_OK" -eq 1 ]; then
     debug "✅ Server health check passed"
   else
-    debug "⚠️  Server health check failed - server might not be ready yet"
+    warn "⚠️  Server health check failed after ${HEALTH_RETRIES} attempts - server might not be ready"
   fi
+fi
+
+# Open browser if requested
+if [ "$OPEN_BROWSER" -eq 1 ]; then
+  open_browser "${PROTOCOL}://$HOST:$PORT"
 fi
 
 # Wait for FrankenPHP and handle signals

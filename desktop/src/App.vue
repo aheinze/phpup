@@ -8,6 +8,7 @@ import CaddyfileEditor from "./components/CaddyfileEditor.vue";
 import ActionBar from "./components/ActionBar.vue";
 import AddGroupModal from "./components/AddGroupModal.vue";
 import ConfirmModal from "./components/ConfirmModal.vue";
+import ToolsPanel from "./components/ToolsPanel.vue";
 
 const store = getStore();
 
@@ -41,6 +42,11 @@ function handleRemoveConfirm() {
     store.removeProject(store.selectedProject.value);
   }
   showRemoveConfirm.value = false;
+}
+
+function handleOpenTools() {
+  store.selectedProject.value = null;
+  store.showTools.value = true;
 }
 
 // Project reordering
@@ -114,6 +120,7 @@ function handleReorderGroups(fromId: string, toId: string) {
       @move-project="handleMoveProject"
       @reorder-projects="handleReorderProjects"
       @reorder-groups="handleReorderGroups"
+      @open-tools="handleOpenTools"
     />
 
     <!-- Add Group Modal -->
@@ -136,8 +143,11 @@ function handleReorderGroups(fromId: string, toId: string) {
 
     <!-- Main Content -->
     <main class="main">
+      <!-- Tools Panel -->
+      <ToolsPanel v-if="store.showTools.value" />
+
       <!-- No project selected -->
-      <div v-if="!store.selectedProject.value" class="empty-main">
+      <div v-else-if="!store.selectedProject.value" class="empty-main">
         <p>Select a project to get started</p>
       </div>
 
@@ -145,6 +155,70 @@ function handleReorderGroups(fromId: string, toId: string) {
       <template v-else>
         <div class="project-header">
           <h1>{{ store.selectedProject.value.name }}</h1>
+          <div class="header-spacer"></div>
+
+          <!-- Start/Stop -->
+          <button
+            v-if="store.selectedProject.value.hasConfig"
+            class="header-icon-btn"
+            :class="{ 'header-icon-success': !store.selectedProject.value.isRunning, 'header-icon-danger': store.selectedProject.value.isRunning }"
+            @click="store.selectedProject.value.isRunning ? store.stopProject(store.selectedProject.value!) : store.startProject(store.selectedProject.value!)"
+            :title="store.selectedProject.value.isRunning ? 'Stop' : 'Start'"
+          >
+            <svg v-if="!store.selectedProject.value.isRunning" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M4 2.5v11l9-5.5-9-5.5z"/>
+            </svg>
+            <svg v-else width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <rect x="3" y="3" width="10" height="10" rx="1"/>
+            </svg>
+          </button>
+
+          <!-- Settings -->
+          <button
+            v-if="store.selectedProject.value.hasConfig"
+            class="header-icon-btn"
+            :class="{ active: store.showSettings.value }"
+            @click="store.showSettings.value = !store.showSettings.value; store.showCaddyfile.value = false"
+            title="Settings"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M2 4h8M12 4h2M2 8h2M6 8h8M2 12h5M9 12h5"/>
+              <circle cx="11" cy="4" r="1.5"/>
+              <circle cx="5" cy="8" r="1.5"/>
+              <circle cx="8" cy="12" r="1.5"/>
+            </svg>
+          </button>
+
+          <!-- Caddyfile -->
+          <button
+            v-if="store.selectedProject.value.hasConfig"
+            class="header-icon-btn"
+            :class="{ active: store.showCaddyfile.value }"
+            @click="store.showCaddyfile.value ? (store.showCaddyfile.value = false) : store.loadCaddyfile(); store.showSettings.value = false"
+            title="Caddyfile"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M9 1H4a1 1 0 00-1 1v12a1 1 0 001 1h8a1 1 0 001-1V5l-4-4z"/>
+              <path d="M9 1v4h4M6 8h4M6 11h4"/>
+            </svg>
+          </button>
+
+          <!-- Separator -->
+          <div v-if="store.selectedProject.value.hasConfig" class="header-separator"></div>
+
+          <!-- Open Folder -->
+          <button class="header-icon-btn" @click="store.openFolder(store.selectedProject.value!)" title="Open Folder">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M2 4v9a1 1 0 001 1h10a1 1 0 001-1V6a1 1 0 00-1-1H8L6.5 3H3a1 1 0 00-1 1z"/>
+            </svg>
+          </button>
+
+          <!-- Remove -->
+          <button class="header-icon-btn header-icon-danger" @click="handleRemoveClick" title="Remove">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M3 4h10M6 4V3a1 1 0 011-1h2a1 1 0 011 1v1M5 4v9a1 1 0 001 1h4a1 1 0 001-1V4"/>
+            </svg>
+          </button>
         </div>
 
         <!-- Not configured state -->
@@ -183,8 +257,9 @@ function handleReorderGroups(fromId: string, toId: string) {
           @clear-output="store.projectOutput.value = []"
         />
 
-        <!-- Action Bar -->
+        <!-- Action Bar (only for unconfigured or editing mode) -->
         <ActionBar
+          v-if="!store.selectedProject.value.hasConfig || store.showSettings.value || store.showCaddyfile.value"
           :project="store.selectedProject.value"
           :show-settings="store.showSettings.value"
           :show-caddyfile="store.showCaddyfile.value"
@@ -194,12 +269,6 @@ function handleReorderGroups(fromId: string, toId: string) {
           @save-settings="store.saveSettings"
           @cancel-caddyfile="store.showCaddyfile.value = false"
           @save-caddyfile="store.saveCaddyfile"
-          @start="store.startProject(store.selectedProject.value!)"
-          @stop="store.stopProject(store.selectedProject.value!)"
-          @open-settings="store.showSettings.value = true"
-          @open-caddyfile="store.loadCaddyfile"
-          @open-folder="store.openFolder(store.selectedProject.value!)"
-          @remove="handleRemoveClick"
         />
       </template>
     </main>
@@ -269,6 +338,51 @@ html, body, #app {
 .project-header h1 {
   font-size: 20px;
   font-weight: 600;
+}
+
+.header-spacer {
+  flex: 1;
+}
+
+.header-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.header-icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.header-icon-btn.active {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.header-icon-danger:hover {
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.header-icon-success:hover {
+  color: var(--success);
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.header-separator {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 4px;
 }
 
 .content-section {

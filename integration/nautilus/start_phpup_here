@@ -79,7 +79,20 @@ launch_terminal_and_run() {
   local dir="$1"
   local cmd="$2"
 
+  # Validate directory exists and is a directory
+  if [ ! -d "$dir" ]; then
+    echo "Error: Target directory does not exist: $dir" >&2
+    return 1
+  fi
+
+  # Validate phpup command is executable
+  if [ ! -x "$cmd" ]; then
+    echo "Error: phpup command is not executable: $cmd" >&2
+    return 1
+  fi
+
   # Export for use inside the invoked shell
+  # Using env vars avoids shell escaping issues with special characters in paths
   export TARGET_DIR="$dir"
   export PHPUP_CMD="$cmd"
 
@@ -106,12 +119,13 @@ launch_terminal_and_run() {
   fi
 
   if command -v xfce4-terminal >/dev/null 2>&1; then
-    xfce4-terminal --working-directory="$TARGET_DIR" --command "bash -lc 'exec \"$PHPUP_CMD\"; exec bash'"
+    # xfce4-terminal needs special handling - use env vars which are safer
+    xfce4-terminal --working-directory="$TARGET_DIR" -e 'bash -lc "exec \"\$PHPUP_CMD\"; exec bash"'
     return $?
   fi
 
   # Last resort: run in background without opening a terminal
-  ( cd "$TARGET_DIR" && "$PHPUP_CMD" ) &
+  ( cd "$TARGET_DIR" && exec "$PHPUP_CMD" ) &
 }
 
 main() {

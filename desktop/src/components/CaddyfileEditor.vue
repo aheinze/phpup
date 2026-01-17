@@ -24,16 +24,22 @@ function selectFile(file: string) {
     </div>
 
     <!-- File tabs -->
-    <div class="caddyfile-tabs">
-      <button
-        v-for="file in files"
-        :key="file"
-        class="caddyfile-tab"
-        :class="{ active: selectedFile === file }"
-        @click="selectFile(file)"
-      >
-        {{ file }}
-      </button>
+    <div class="tabs-container">
+      <div class="tabs-pills">
+        <button
+          v-for="file in files"
+          :key="file"
+          class="tab-pill"
+          :class="{ active: selectedFile === file }"
+          @click="selectFile(file)"
+        >
+          <svg class="tab-icon" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M8 1H3.5a1 1 0 00-1 1v10a1 1 0 001 1h7a1 1 0 001-1V4.5L8 1z"/>
+            <path d="M8 1v3.5h3.5"/>
+          </svg>
+          {{ file }}
+        </button>
+      </div>
     </div>
 
     <div class="caddyfile-editor">
@@ -64,33 +70,52 @@ function selectFile(file: string) {
   font-weight: 600;
 }
 
-.caddyfile-tabs {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
+.tabs-container {
+  margin-bottom: 16px;
 }
 
-.caddyfile-tab {
-  padding: 6px 12px;
+.tabs-pills {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
   background: var(--bg-secondary);
+  border-radius: 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+}
+
+.tab-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
   font-size: 13px;
+  font-weight: 500;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.2s ease;
 }
 
-.caddyfile-tab:hover {
-  background: var(--bg-hover);
+.tab-pill:hover:not(.active) {
   color: var(--text);
+  background: var(--bg-hover);
 }
 
-.caddyfile-tab.active {
-  background: var(--text);
-  color: var(--bg);
-  border-color: var(--text);
+.tab-pill.active {
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.tab-icon {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.tab-pill.active .tab-icon {
+  opacity: 1;
 }
 
 .caddyfile-editor {

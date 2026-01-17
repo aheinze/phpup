@@ -5,6 +5,18 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { resolveResource } from "@tauri-apps/api/path";
 import type { Project, Group, RunningProcess, ProjectSettings } from "../types";
 
+// Shell escape function to prevent command injection
+function shellEscape(str: string): string {
+  // Wrap in single quotes and escape any single quotes within
+  return "'" + str.replace(/'/g, "'\\''") + "'";
+}
+
+// Validate port is numeric
+function isValidPort(port: string): boolean {
+  const num = parseInt(port, 10);
+  return !isNaN(num) && num > 0 && num <= 65535 && port === num.toString();
+}
+
 // Global state
 const groups = ref<Group[]>([]);
 const projects = ref<Project[]>([]);
@@ -17,6 +29,7 @@ const searchQuery = ref("");
 const showSettings = ref(false);
 const showCaddyfile = ref(false);
 const showAddGroup = ref(false);
+const showTools = ref(false);
 
 // Caddyfile state
 const caddyfileContent = ref("");
@@ -84,7 +97,7 @@ export function useStore() {
       const resourcePath = await resolveResource("phpup");
       const chmodCmd = Command.create("run-bash", [
         "-c",
-        `chmod +x "${resourcePath}"`,
+        `chmod +x ${shellEscape(resourcePath)}`,
       ]);
       await chmodCmd.execute();
       console.log("Using bundled phpup:", resourcePath);
@@ -152,7 +165,7 @@ export function useStore() {
       for (const name of faviconNames) {
         const cmd = Command.create("run-bash", [
           "-c",
-          `test -f "${basePath}/${name}" && echo "found"`,
+          `test -f ${shellEscape(basePath + "/" + name)} && echo "found"`,
         ]);
         const result = await cmd.execute();
         if (result.stdout.trim() === "found") {
@@ -185,7 +198,7 @@ export function useStore() {
   ): Promise<{ hasConfig: boolean; port: string; docroot: string }> {
     const configCmd = Command.create("run-bash", [
       "-c",
-      `cat "${path}/.phpup/config" 2>/dev/null`,
+      `cat ${shellEscape(path + "/.phpup/config")} 2>/dev/null`,
     ]);
     const configResult = await configCmd.execute();
 
@@ -202,14 +215,14 @@ export function useStore() {
 
     const dirCmd = Command.create("run-bash", [
       "-c",
-      `ls "${path}/.phpup/Caddyfile"* 2>/dev/null | head -1`,
+      `ls ${shellEscape(path + "/.phpup/")}'Caddyfile'* 2>/dev/null | head -1`,
     ]);
     const dirResult = await dirCmd.execute();
 
     if (dirResult.code === 0 && dirResult.stdout.trim()) {
       const docrootCmd = Command.create("run-bash", [
         "-c",
-        `cd "${path}" && for d in public web www htdocs dist build .; do [ -d "$d" ] && echo "$d" && break; done`,
+        `cd ${shellEscape(path)} && for d in public web www htdocs dist build .; do [ -d "$d" ] && echo "$d" && break; done`,
       ]);
       const docrootResult = await docrootCmd.execute();
       const docroot = docrootResult.stdout.trim() || ".";
@@ -277,6 +290,7 @@ export function useStore() {
     selectedProject.value = project;
     showSettings.value = false;
     showCaddyfile.value = false;
+    showTools.value = false;
     projectOutput.value = [];
 
     const { hasConfig, port: configPort, docroot: configDocroot } =
@@ -291,16 +305,16 @@ export function useStore() {
     if (hasConfig) {
       const command = Command.create("run-bash", [
         "-c",
-        `cat "${project.path}/.phpup/config" 2>/dev/null`,
+        `cat ${shellEscape(project.path + "/.phpup/config")} 2>/dev/null`,
       ]);
       const result = await command.execute();
       if (result.code === 0) {
         const config = result.stdout;
         const hostMatch = config.match(/HOST=["']?([^"'\n]+)["']?/);
         const domainMatch = config.match(/DOMAIN=["']?([^"'\n]+)["']?/);
-        const httpsMatch = config.match(/HTTPS=["']?([^"'\n]+)["']?/);
-        const workerMatch = config.match(/WORKER=["']?(true|false|1|0)["']?/i);
-        const watchMatch = config.match(/WATCH=["']?(true|false|1|0)["']?/i);
+        const httpsMatch = config.match(/HTTPS_MODE=["']?([^"'\n]+)["']?/);
+        const workerMatch = config.match(/WORKER_MODE=["']?(true|false|1|0)["']?/i);
+        const watchMatch = config.match(/WATCH_MODE=["']?(true|false|1|0)["']?/i);
         const compressionMatch = config.match(/COMPRESSION=["']?(true|false|1|0)["']?/i);
         const browserMatch = config.match(/OPEN_BROWSER=["']?(true|false|1|0)["']?/i);
 
@@ -325,7 +339,7 @@ export function useStore() {
 
     const command = Command.create("run-bash", [
       "-c",
-      `cd "${project.path}" && "${phpupCommand.value}" --init 2>&1`,
+      `cd ${shellEscape(project.path)} && ${shellEscape(phpupCommand.value)} --init 2>&1`,
     ]);
     const result = await command.execute();
 
@@ -344,16 +358,18 @@ HOST="${settings.value.host}"
 PORT="${settings.value.port}"
 DOMAIN="${settings.value.domain}"
 DOCROOT="${settings.value.docroot}"
-HTTPS="${settings.value.httpsMode}"
-WORKER="${settings.value.workerMode}"
-WATCH="${settings.value.watchMode}"
-COMPRESSION="${settings.value.compression}"
-OPEN_BROWSER="${settings.value.openBrowser}"
+HTTPS_MODE="${settings.value.httpsMode}"
+WORKER_MODE="${settings.value.workerMode ? 1 : 0}"
+WATCH_MODE="${settings.value.watchMode ? 1 : 0}"
+COMPRESSION="${settings.value.compression ? 1 : 0}"
+OPEN_BROWSER="${settings.value.openBrowser ? 1 : 0}"
 `;
 
+    const phpupDir = selectedProject.value.path + "/.phpup";
+    const configPath = phpupDir + "/config";
     const command = Command.create("run-bash", [
       "-c",
-      `mkdir -p "${selectedProject.value.path}/.phpup" && cat > "${selectedProject.value.path}/.phpup/config" << 'EOF'\n${config}\nEOF`,
+      `mkdir -p ${shellEscape(phpupDir)} && cat > ${shellEscape(configPath)} << 'EOF'\n${config}\nEOF`,
     ]);
     await command.execute();
 
@@ -370,9 +386,10 @@ OPEN_BROWSER="${settings.value.openBrowser}"
   async function loadCaddyfile() {
     if (!selectedProject.value) return;
 
+    const phpupDir = selectedProject.value.path + "/.phpup/";
     const listCmd = Command.create("run-bash", [
       "-c",
-      `ls -1 "${selectedProject.value.path}/.phpup/"Caddyfile* 2>/dev/null | xargs -n1 basename 2>/dev/null`,
+      `ls -1 ${shellEscape(phpupDir)}'Caddyfile'* 2>/dev/null | xargs -n1 basename 2>/dev/null`,
     ]);
     const listResult = await listCmd.execute();
     const files = listResult.stdout.trim().split("\n").filter((f) => f);
@@ -388,9 +405,16 @@ OPEN_BROWSER="${settings.value.openBrowser}"
   async function loadSelectedCaddyfile() {
     if (!selectedProject.value || !selectedCaddyfile.value) return;
 
+    // Validate Caddyfile name to prevent path traversal
+    if (!/^Caddyfile(\.[a-zA-Z0-9_-]+)?$/.test(selectedCaddyfile.value)) {
+      console.error("Invalid Caddyfile name:", selectedCaddyfile.value);
+      return;
+    }
+
+    const caddyfilePath = selectedProject.value.path + "/.phpup/" + selectedCaddyfile.value;
     const command = Command.create("run-bash", [
       "-c",
-      `cat "${selectedProject.value.path}/.phpup/${selectedCaddyfile.value}" 2>/dev/null`,
+      `cat ${shellEscape(caddyfilePath)} 2>/dev/null`,
     ]);
     const result = await command.execute();
     caddyfileContent.value = result.stdout || "";
@@ -399,9 +423,16 @@ OPEN_BROWSER="${settings.value.openBrowser}"
   async function saveCaddyfile() {
     if (!selectedProject.value || !selectedCaddyfile.value) return;
 
+    // Validate Caddyfile name to prevent path traversal
+    if (!/^Caddyfile(\.[a-zA-Z0-9_-]+)?$/.test(selectedCaddyfile.value)) {
+      console.error("Invalid Caddyfile name:", selectedCaddyfile.value);
+      return;
+    }
+
+    const caddyfilePath = selectedProject.value.path + "/.phpup/" + selectedCaddyfile.value;
     const command = Command.create("run-bash", [
       "-c",
-      `cat > "${selectedProject.value.path}/.phpup/${selectedCaddyfile.value}" << 'CADDYFILE_EOF'\n${caddyfileContent.value}\nCADDYFILE_EOF`,
+      `cat > ${shellEscape(caddyfilePath)} << 'CADDYFILE_EOF'\n${caddyfileContent.value}\nCADDYFILE_EOF`,
     ]);
     await command.execute();
 
@@ -426,7 +457,7 @@ OPEN_BROWSER="${settings.value.openBrowser}"
     if (!settings.value.compression) args.push("--no-compression");
     if (!settings.value.openBrowser) args.push("--no-browser");
 
-    const cmdString = `cd "${project.path}" && "${phpupCommand.value}" ${args.join(" ")} 2>&1`;
+    const cmdString = `cd ${shellEscape(project.path)} && ${shellEscape(phpupCommand.value)} ${args.map(shellEscape).join(" ")} 2>&1`;
     projectOutput.value.push(`Running: ${cmdString}`);
 
     try {
@@ -481,11 +512,14 @@ OPEN_BROWSER="${settings.value.openBrowser}"
       runningProcesses.value.delete(project.id);
     }
 
-    const command = Command.create("run-bash", [
-      "-c",
-      `fuser -k ${project.port}/tcp 2>/dev/null || lsof -ti:${project.port} | xargs -r kill 2>/dev/null || true`,
-    ]);
-    await command.execute();
+    // Validate port is numeric to prevent command injection
+    if (isValidPort(project.port)) {
+      const command = Command.create("run-bash", [
+        "-c",
+        `fuser -k ${project.port}/tcp 2>/dev/null || lsof -ti:${project.port} | xargs -r kill 2>/dev/null || true`,
+      ]);
+      await command.execute();
+    }
 
     project.isRunning = false;
     projectOutput.value.push("[Server stopped]");
@@ -494,7 +528,7 @@ OPEN_BROWSER="${settings.value.openBrowser}"
   async function refreshAllStatuses() {
     const command = Command.create("run-bash", [
       "-c",
-      `"${phpupCommand.value}" --list 2>&1`,
+      `${shellEscape(phpupCommand.value)} --list 2>&1`,
     ]);
     const result = await command.execute();
     const output = result.stdout + result.stderr;
@@ -546,9 +580,10 @@ OPEN_BROWSER="${settings.value.openBrowser}"
   }
 
   async function openFolder(project: Project) {
+    const escapedPath = shellEscape(project.path);
     const command = Command.create("run-bash", [
       "-c",
-      `xdg-open "${project.path}" 2>/dev/null || open "${project.path}" 2>/dev/null`,
+      `xdg-open ${escapedPath} 2>/dev/null || open ${escapedPath} 2>/dev/null`,
     ]);
     await command.execute();
   }
@@ -603,6 +638,7 @@ OPEN_BROWSER="${settings.value.openBrowser}"
     showSettings,
     showCaddyfile,
     showAddGroup,
+    showTools,
     caddyfileContent,
     caddyfileList,
     selectedCaddyfile,

@@ -40,6 +40,7 @@ function handleFaviconError() {
     @dragleave="emit('dragleave')"
     @drop="emit('drop', $event, project)"
   >
+    <span v-if="project.isRunning" class="running-indicator"></span>
     <img
       v-if="project.favicon"
       :src="convertFileSrc(project.favicon)"
@@ -89,6 +90,15 @@ function handleFaviconError() {
   background: var(--bg-active);
 }
 
+.running-indicator {
+  width: 6px;
+  height: 6px;
+  background: var(--success);
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-right: -4px;
+}
+
 .project-favicon {
   width: 16px;
   height: 16px;
@@ -103,6 +113,7 @@ function handleFaviconError() {
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: 14px;
+  line-height: 1;
 }
 
 .project-action-btn {
