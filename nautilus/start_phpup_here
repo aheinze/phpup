@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Nautilus script: Open a terminal in the selected folder and start phpup
+#
+# Installation (user):
+#   - Copy this file to: ~/.local/share/nautilus/scripts/Start phpup here
+#   - chmod +x ~/.local/share/nautilus/scripts/Start\ phpup\ here
+#   - Optionally restart Nautilus: nautilus -q
+#
+# Behavior:
+#   - Uses the first selected item; if it's a file, uses its directory.
+#   - If nothing is selected, uses the current folder.
+#   - Tries to run `phpup` from PATH; otherwise uses $PHPUP_BIN; otherwise
+#     falls back to "$HOME/DEV/phpup/phpup" if present.
+#   - Opens an available terminal (gnome-terminal, kgx, x-terminal-emulator, konsole, xfce4-terminal).
+
+# Decode a file:// URI to a local path (requires python3 if a URI is provided)
+decode_uri_to_path() {
+  local uri="$1"
+  if [[ "$uri" == file://* ]]; then
+    if command -v python3 >/dev/null 2>&1; then
+      python3 - "$uri" <<'PY'
+import sys, urllib.parse
+u = sys.argv[1]
+print(urllib.parse.unquote(u).replace('file://', ''), end='')
+PY
+      return 0
+    fi
+    # Fallback: strip prefix, leave any %XX as-is
+    printf '%s' "${uri#file://}"
+    return 0
+  fi
+  printf '%s' "$uri"
+}
+
+# Determine the target directory from Nautilus environment variables
+pick_target_dir() {
+  local selected=""
+
+  if [ -n "${NAUTILUS_SCRIPT_SELECTED_FILE_PATHS:-}" ]; then
+    # Use the first selected path (newline-separated)
+    IFS=$'\n' read -r selected <<<"$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS"
+  elif [ -n "${NAUTILUS_SCRIPT_SELECTED_URIS:-}" ]; then
+    IFS=$'\n' read -r first_uri <<<"$NAUTILUS_SCRIPT_SELECTED_URIS"
+    selected="$(decode_uri_to_path "$first_uri")"
+  elif [ -n "${NAUTILUS_SCRIPT_CURRENT_URI:-}" ]; then
+    selected="$(decode_uri_to_path "$NAUTILUS_SCRIPT_CURRENT_URI")"
+  else
+    selected="$PWD"
+  fi
+
+  # Resolve to a directory
+  if [ -d "$selected" ]; then
+    printf '%s' "$selected"
+  else
+    dirname -- "$selected"
+  fi
+}
+
+# Locate the phpup executable
+find_phpup() {
+  if command -v phpup >/dev/null 2>&1; then
+    command -v phpup
+    return 0
+  fi
+  if [ -n "${PHPUP_BIN:-}" ] && [ -x "${PHPUP_BIN}" ]; then
+    printf '%s' "$PHPUP_BIN"
+    return 0
+  fi
+  if [ -x "$HOME/DEV/phpup/phpup" ]; then
+    printf '%s' "$HOME/DEV/phpup/phpup"
+    return 0
+  fi
+  return 1
+}
+
+launch_terminal_and_run() {
+  local dir="$1"
+  local cmd="$2"
+
+  # Export for use inside the invoked shell
+  export TARGET_DIR="$dir"
+  export PHPUP_CMD="$cmd"
+
+  if command -v gnome-terminal >/dev/null 2>&1; then
+    # GNOME Terminal supports a working directory flag
+    gnome-terminal --working-directory="$TARGET_DIR" -- bash -lc 'exec "$PHPUP_CMD"; exec bash'
+    return $?
+  fi
+
+  if command -v kgx >/dev/null 2>&1; then
+    # GNOME Console (kgx); cd first since --working-directory is not universal
+    kgx -- bash -lc 'cd "$TARGET_DIR" && exec "$PHPUP_CMD"; exec bash'
+    return $?
+  fi
+
+  if command -v x-terminal-emulator >/dev/null 2>&1; then
+    x-terminal-emulator -e bash -lc 'cd "$TARGET_DIR" && exec "$PHPUP_CMD"; exec bash'
+    return $?
+  fi
+
+  if command -v konsole >/dev/null 2>&1; then
+    konsole --workdir "$TARGET_DIR" -e bash -lc 'exec "$PHPUP_CMD"; exec bash'
+    return $?
+  fi
+
+  if command -v xfce4-terminal >/dev/null 2>&1; then
+    xfce4-terminal --working-directory="$TARGET_DIR" --command "bash -lc 'exec \"$PHPUP_CMD\"; exec bash'"
+    return $?
+  fi
+
+  # Last resort: run in background without opening a terminal
+  ( cd "$TARGET_DIR" && "$PHPUP_CMD" ) &
+}
+
+main() {
+  local dir
+  dir="$(pick_target_dir)"
+
+  local phpup_bin
+  if ! phpup_bin="$(find_phpup)"; then
+    if command -v zenity >/dev/null 2>&1; then
+      zenity --error --title="phpup not found" \
+        --text="Could not find 'phpup'.\nInstall it (./phpup --install) or set PHPUP_BIN to its path."
+    else
+      echo "phpup not found. Install it (./phpup --install) or set PHPUP_BIN to its path." >&2
+    fi
+    exit 127
+  fi
+
+  launch_terminal_and_run "$dir" "$phpup_bin"
+}
+
+main "$@"
+
