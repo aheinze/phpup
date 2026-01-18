@@ -1398,6 +1398,8 @@ if [ "$INIT_MODE" -eq 1 ]; then
       DOCROOT="$(pwd)/public"
     elif [ -d "web" ]; then
       DOCROOT="$(pwd)/web"
+    elif [ -d "www" ]; then
+      DOCROOT="$(pwd)/www"
     else
       DOCROOT="$(pwd)"
     fi
@@ -1539,6 +1541,9 @@ EOF
 
     if [ "$mode" = "classic" ]; then
       cat > "$caddyfile_path" <<EOF
+# phpup classic mode Caddyfile
+# Generated with detected docroot: ${DOCROOT}
+# Host: ${HOST}  Port: ${PORT}
 {
   auto_https off
   frankenphp {
@@ -1621,6 +1626,9 @@ EOF
       fi
 
       cat > "$caddyfile_path" <<EOF
+# phpup worker mode Caddyfile
+# Generated with detected docroot: ${DOCROOT}
+# Host: ${HOST}  Port: ${PORT}
 {
   auto_https off
   frankenphp {
@@ -1673,7 +1681,8 @@ EOF
     log "📄 Generated $mode mode Caddyfile: $caddyfile_path"
   }
 
-  # Generate configuration files (no standalone php.ini; settings are inline)
+  # Generate configuration files
+  generate_php_config
   generate_caddyfile_template "classic"
   generate_caddyfile_template "worker"
 
@@ -1695,12 +1704,13 @@ EOF
   log ""
   log "✅ Configuration files generated in .phpup/"
   log "📁 Files created:"
+  log "   php.ini           - PHP configuration (memory, errors, uploads, etc.)"
   log "   Caddyfile         - Main Caddyfile (imports classic by default)"
   log "   Caddyfile.classic - Classic mode template (with inline php_ini)"
   log "   Caddyfile.worker  - Worker mode template (with inline php_ini)"
   log ""
   log "📊 Log files (created at runtime):"
-  log "   php_errors.log    - PHP error log (configured in php_ini)"
+  log "   php_errors.log    - PHP error log (configured in php.ini)"
   log "   access.log        - HTTP access log (JSON format, 10MB rotation)"
   log ""
 
@@ -1710,8 +1720,8 @@ EOF
   fi
 
   log "🔧 Next steps:"
-  log "   1. Edit .phpup/Caddyfile to customize server configuration"
-  log "   2. Optionally tweak inline php_ini blocks in the templates"
+  log "   1. Edit .phpup/php.ini to customize PHP settings"
+  log "   2. Edit .phpup/Caddyfile to customize server configuration"
   log "   3. Run './phpup' to start the server with your custom config"
   log "   4. Check .phpup/php_errors.log for PHP errors"
   log ""
@@ -1842,6 +1852,8 @@ if [ -z "$DOCROOT" ]; then
     DOCROOT="$(pwd)/public"
   elif [ -d "web" ]; then
     DOCROOT="$(pwd)/web"
+  elif [ -d "www" ]; then
+    DOCROOT="$(pwd)/www"
   else
     DOCROOT="$(pwd)"
   fi
@@ -2355,8 +2367,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
       cat "$FINAL_CADDYFILE" | sed 's/^/  /'
     fi
   fi
-  echo "Protocol: $PROTOCOL"
-  echo "Host: $HOST  Port: $PORT"
+  echo "URL: ${PROTOCOL}://${HOST}:${PORT}"
   echo "📁 Docroot: $DOCROOT"
   echo "ServerName: $SERVER_NAME"
   if [ "${EFFECTIVE_WORKER_MODE:-$WORKER_MODE}" -eq 1 ]; then
