@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref, computed, watch } from "vue";
 import { Command } from "@tauri-apps/plugin-shell";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { Project } from "../types";
 import ConsoleOutput from "./ConsoleOutput.vue";
 
@@ -17,6 +18,19 @@ const emit = defineEmits<{
   openTools: [];
   openIde: [];
 }>();
+
+const serverUrl = computed(() => `http://${props.host}:${props.project.port}`);
+const urlCopied = ref(false);
+
+async function copyUrl() {
+  try {
+    await writeText(serverUrl.value);
+  } catch {
+    await navigator.clipboard.writeText(serverUrl.value);
+  }
+  urlCopied.value = true;
+  setTimeout(() => { urlCopied.value = false; }, 1500);
+}
 
 const statusLabels: Record<string, string> = {
   stopped: "Stopped",
@@ -205,14 +219,23 @@ watch(() => props.project.path, () => {
         <span class="info-label">Path</span>
         <span class="info-value mono">{{ project.docroot }}</span>
       </div>
-      <div v-if="project.isRunning" class="info-row">
+      <div v-if="project.status === 'running' || project.status === 'starting'" class="info-row">
         <span class="info-label">URL</span>
-        <span class="info-value mono">
+        <span class="info-value mono url-cell">
           <a
             href="#"
             class="url-link"
             @click.prevent="emit('openBrowser')"
-          >http://{{ host }}:{{ project.port }}</a>
+          >{{ serverUrl }}</a>
+          <button class="copy-btn" @click="copyUrl" :title="urlCopied ? 'Copied!' : 'Copy URL'">
+            <svg v-if="!urlCopied" width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="4" y="4" width="8" height="8" rx="1"/>
+              <path d="M10 4V2.5A.5.5 0 009.5 2h-7a.5.5 0 00-.5.5v7a.5.5 0 00.5.5H4"/>
+            </svg>
+            <svg v-else width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M3 7l3 3 5-5"/>
+            </svg>
+          </button>
         </span>
       </div>
     </div>
@@ -221,8 +244,9 @@ watch(() => props.project.path, () => {
     <div v-if="detectedIde" class="quick-actions">
       <button class="btn-outline btn-small" @click="emit('openIde')">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M10 1l3 3-8 8H2v-3l8-8z"/>
-          <path d="M8 3l3 3"/>
+          <path d="M6 1H2.5a1.5 1.5 0 00-1.5 1.5v9A1.5 1.5 0 002.5 13h9a1.5 1.5 0 001.5-1.5V8"/>
+          <path d="M8 1h5v5"/>
+          <path d="M13 1L6 8"/>
         </svg>
         Open in {{ detectedIde }}
       </button>
@@ -306,20 +330,21 @@ watch(() => props.project.path, () => {
 <style scoped>
 .content-section {
   flex: 1;
-  padding: 24px;
+  padding: 16px;
   overflow-y: auto;
 }
 
 .info-table {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 4px;
   overflow: hidden;
 }
 
 .info-row {
   display: flex;
-  padding: 12px 16px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
+  font-size: 13px;
 }
 
 .info-row:last-child {
@@ -327,8 +352,8 @@ watch(() => props.project.path, () => {
 }
 
 .info-label {
-  width: 120px;
-  color: var(--text-secondary);
+  width: 100px;
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 
@@ -337,8 +362,8 @@ watch(() => props.project.path, () => {
 }
 
 .info-value.mono {
-  font-family: 'SF Mono', Monaco, monospace;
-  font-size: 13px;
+  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+  font-size: 12px;
 }
 
 .url-link {
@@ -351,29 +376,56 @@ watch(() => props.project.path, () => {
   text-decoration: underline;
 }
 
+.url-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.copy-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.1s;
+  flex-shrink: 0;
+}
+
+.copy-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
 .status-badge {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 500;
   background: var(--bg-hover);
   color: var(--text-secondary);
 }
 
 .status-badge.running {
-  background: #dcfce7;
-  color: #166534;
+  background: var(--success-light);
+  color: var(--success);
 }
 
 .status-badge.starting {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--warning-light);
+  color: var(--warning);
   animation: pulse-badge 1.5s infinite;
 }
 
 .status-badge.crashed {
-  background: #fee2e2;
-  color: #991b1b;
+  background: var(--danger-light);
+  color: var(--danger);
 }
 
 @keyframes pulse-badge {
@@ -382,35 +434,35 @@ watch(() => props.project.path, () => {
 }
 
 .quick-actions {
-  margin-top: 12px;
+  margin-top: 10px;
   display: flex;
   gap: 8px;
 }
 
 .health-checks {
-  margin-top: 16px;
+  margin-top: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .health-check-item {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: 6px;
-  font-size: 13px;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12px;
 }
 
 .health-check-item.warning {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--warning-light);
+  color: var(--warning);
 }
 
 .health-check-item.missing {
-  background: #fee2e2;
-  color: #991b1b;
+  background: var(--danger-light);
+  color: var(--danger);
 }
 
 .check-icon {
@@ -429,34 +481,37 @@ watch(() => props.project.path, () => {
 }
 
 .check-message {
-  font-size: 12px;
+  font-size: 11px;
   opacity: 0.85;
 }
 
 .composer-section {
-  margin-top: 20px;
+  margin-top: 16px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
+  border-radius: 4px;
+  padding: 12px;
 }
 
 .section-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
 .section-header h3 {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .vendor-status {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .vendor-status.installed {
@@ -469,21 +524,22 @@ watch(() => props.project.path, () => {
 
 .composer-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 
 .btn-outline {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
+  gap: 5px;
+  padding: 5px 12px;
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.1s;
 }
 
 .btn-outline:hover {
@@ -491,19 +547,19 @@ watch(() => props.project.path, () => {
 }
 
 .btn-outline:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 .btn-small {
-  padding: 6px 12px;
-  font-size: 13px;
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 .composer-output {
-  margin-top: 12px;
+  margin-top: 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 4px;
   overflow: hidden;
 }
 
@@ -511,19 +567,22 @@ watch(() => props.project.path, () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 12px;
+  padding: 6px 10px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border);
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .clear-btn {
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
   cursor: pointer;
+  text-transform: uppercase;
 }
 
 .clear-btn:hover {
@@ -531,13 +590,14 @@ watch(() => props.project.path, () => {
 }
 
 .output-content {
-  padding: 12px;
-  font-family: 'SF Mono', Monaco, monospace;
-  font-size: 12px;
-  line-height: 1.6;
+  padding: 10px 12px;
+  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+  font-size: 11px;
+  line-height: 1.7;
   max-height: 200px;
   overflow-y: auto;
-  background: var(--bg);
+  background: #1a1b1e;
+  color: #a8b1c2;
 }
 
 .output-content div {

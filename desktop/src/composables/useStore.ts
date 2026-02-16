@@ -304,6 +304,11 @@ function useStore() {
     selectProject(project);
   }
 
+  function renameProject(project: Project, name: string) {
+    project.name = name;
+    saveData();
+  }
+
   function removeProject(project: Project) {
     if (project.isRunning) {
       stopProject(project);
@@ -511,8 +516,33 @@ XDEBUG="${settings.value.xdebug ? 1 : 0}"
     notifications.value = notifications.value.filter((n) => n.id !== id);
   }
 
+  // Port check
+  async function isPortInUse(port: string): Promise<boolean> {
+    const cmd = Command.create("run-bash", [
+      "-c",
+      `ss -tlnp 2>/dev/null | grep -q ':${port}\b' || lsof -i:${port} -sTCP:LISTEN -t 2>/dev/null | grep -qm1 .`,
+    ]);
+    const result = await cmd.execute();
+    return result.code === 0;
+  }
+
+  async function findAvailablePort(startPort: string): Promise<string> {
+    let port = parseInt(startPort, 10);
+    for (let i = 0; i < 100; i++) {
+      port++;
+      if (port > 65535) break;
+      if (!(await isPortInUse(port.toString()))) {
+        return port.toString();
+      }
+    }
+    return "";
+  }
+
+  // Port conflict state
+  const portConflict = ref<{ project: Project; suggestedPort: string } | null>(null);
+
   // Server management
-  async function startProject(project: Project) {
+  async function startProject(project: Project, overridePort?: string) {
     if (project.isRunning) return;
 
     // Validate config before starting
@@ -521,6 +551,25 @@ XDEBUG="${settings.value.xdebug ? 1 : 0}"
       projectOutput.value = ["Configuration errors:", ...errors.map((e) => `  - ${e}`)];
       addNotification(errors[0], "error");
       return;
+    }
+
+    const port = overridePort || project.port;
+
+    // Check port availability
+    if (isValidPort(port) && await isPortInUse(port)) {
+      const suggested = await findAvailablePort(port);
+      if (suggested) {
+        portConflict.value = { project, suggestedPort: suggested };
+      } else {
+        addNotification(`Port ${port} is in use and no free port found nearby`, "error");
+      }
+      return;
+    }
+
+    // Apply override port if used
+    if (overridePort) {
+      project.port = overridePort;
+      settings.value.port = overridePort;
     }
 
     projectOutput.value = ["Starting server..."];
@@ -552,7 +601,8 @@ XDEBUG="${settings.value.xdebug ? 1 : 0}"
         output.push(data);
         capOutput(output);
         // Detect when server is actually listening
-        if (!serverReady && (data.includes("Listening on") || data.includes("serving") || data.includes("Started"))) {
+        const lower = data.toLowerCase();
+        if (!serverReady && (lower.includes("started") || lower.includes("listening") || lower.includes("serving") || lower.includes("running") || lower.includes("ready"))) {
           serverReady = true;
           project.status = "running";
         }
@@ -564,7 +614,8 @@ XDEBUG="${settings.value.xdebug ? 1 : 0}"
       command.stderr.on("data", (data) => {
         output.push(data);
         capOutput(output);
-        if (!serverReady && (data.includes("Listening on") || data.includes("serving") || data.includes("Started"))) {
+        const lower = data.toLowerCase();
+        if (!serverReady && (lower.includes("started") || lower.includes("listening") || lower.includes("serving") || lower.includes("running") || lower.includes("ready"))) {
           serverReady = true;
           project.status = "running";
         }
@@ -611,7 +662,7 @@ XDEBUG="${settings.value.xdebug ? 1 : 0}"
         if (project.status === "starting" && project.isRunning) {
           project.status = "running";
         }
-      }, 5000);
+      }, 3000);
     } catch (err) {
       project.status = "crashed";
       projectOutput.value.push(`\n[Failed to start: ${err}]`);
@@ -847,6 +898,7 @@ XDEBUG="${settings.value.xdebug ? 1 : 0}"
     phpupReady,
     notifications,
     phpExtensions,
+    portConflict,
 
     // Computed
     filteredProjects,
@@ -857,6 +909,7 @@ XDEBUG="${settings.value.xdebug ? 1 : 0}"
     initialize,
     refreshAllStatuses,
     addProject,
+    renameProject,
     removeProject,
     selectProject,
     initProject,

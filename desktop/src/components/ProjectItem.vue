@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from "vue";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Project } from "../types";
 
@@ -12,12 +13,31 @@ const emit = defineEmits<{
   select: [project: Project];
   start: [project: Project];
   stop: [project: Project];
+  rename: [project: Project, name: string];
   dragstart: [event: DragEvent, project: Project];
   dragend: [];
   dragover: [event: DragEvent, project: Project];
   dragleave: [];
   drop: [event: DragEvent, project: Project];
 }>();
+
+const editing = ref(false);
+
+function startRename() {
+  editing.value = true;
+}
+
+function finishRename(e: Event) {
+  const value = (e.target as HTMLInputElement).value.trim();
+  editing.value = false;
+  if (value && value !== props.project.name) {
+    emit("rename", props.project, value);
+  }
+}
+
+function cancelRename() {
+  editing.value = false;
+}
 
 function handleFaviconError() {
   props.project.favicon = undefined;
@@ -29,7 +49,7 @@ function handleFaviconError() {
     class="project-item"
     :class="{
       active: isActive,
-      running: project.isRunning,
+      running: project.status === 'running' || project.status === 'starting',
       'drag-over': isDragOver
     }"
     draggable="true"
@@ -49,9 +69,20 @@ function handleFaviconError() {
       class="project-favicon"
       @error="handleFaviconError"
     />
-    <span class="project-name">{{ project.name }}</span>
+    <input
+      v-if="editing"
+      type="text"
+      class="project-name-input"
+      :value="project.name"
+      @blur="finishRename"
+      @keyup.enter="finishRename"
+      @keyup.escape="cancelRename"
+      @click.stop
+      autofocus
+    />
+    <span v-else class="project-name" @dblclick.stop="startRename">{{ project.name }}</span>
     <button
-      v-if="project.isRunning"
+      v-if="project.status === 'running' || project.status === 'starting'"
       class="project-action-btn stop"
       @click.stop="emit('stop', project)"
       title="Stop"
@@ -77,11 +108,11 @@ function handleFaviconError() {
 .project-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 6px;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.1s;
 }
 
 .project-item:hover {
@@ -97,16 +128,17 @@ function handleFaviconError() {
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
-  margin-right: -4px;
+  margin-right: -2px;
 }
 
 .status-indicator.running {
   background: var(--success);
+  box-shadow: 0 0 6px rgba(87, 166, 74, 0.4);
 }
 
 .status-indicator.starting {
-  background: #f59e0b;
-  animation: pulse-dot 1.5s infinite;
+  background: var(--warning);
+  animation: pulse-dot 1.2s infinite;
 }
 
 .status-indicator.crashed {
@@ -119,10 +151,10 @@ function handleFaviconError() {
 }
 
 .project-favicon {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   flex-shrink: 0;
-  border-radius: 3px;
+  border-radius: 2px;
   object-fit: contain;
 }
 
@@ -131,23 +163,37 @@ function handleFaviconError() {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1;
+  color: var(--text);
+}
+
+.project-name-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  outline: none;
 }
 
 .project-action-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border: none;
-  border-radius: 4px;
+  border-radius: 3px;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
   opacity: 0;
-  transition: all 0.15s;
+  transition: all 0.1s;
   flex-shrink: 0;
 }
 
@@ -166,7 +212,7 @@ function handleFaviconError() {
 
 .project-action-btn.stop:hover {
   color: var(--danger);
-  background: rgba(239, 68, 68, 0.1);
+  background: var(--danger-light);
 }
 
 .project-item[draggable="true"] {

@@ -549,8 +549,10 @@ onUnmounted(() => {
 
       <div v-else-if="runningProcesses.length === 0" class="empty-monitor">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <circle cx="12" cy="12" r="10"/>
-          <path d="M8 12h8"/>
+          <rect x="3" y="4" width="18" height="6" rx="1.5"/>
+          <rect x="3" y="14" width="18" height="6" rx="1.5"/>
+          <circle cx="7" cy="7" r="1" fill="currentColor" stroke="none" opacity="0.3"/>
+          <circle cx="7" cy="17" r="1" fill="currentColor" stroke="none" opacity="0.3"/>
         </svg>
         <span>No servers running</span>
       </div>
@@ -580,7 +582,7 @@ onUnmounted(() => {
 <style scoped>
 .content-section {
   flex: 1;
-  padding: 24px;
+  padding: 16px;
   overflow-y: auto;
 }
 
@@ -588,37 +590,42 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 20px;
+  margin-bottom: 14px;
 }
 
 .section-header h2 {
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .tool-card {
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 20px;
-  margin-bottom: 16px;
+  border-radius: 4px;
+  padding: 14px;
+  margin-bottom: 12px;
+  background: var(--bg-secondary);
 }
 
 .tool-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 16px;
+  gap: 12px;
 }
 
 .tool-info h3 {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
 
 .tool-description {
-  font-size: 13px;
-  color: var(--text-secondary);
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
 }
 
 .tool-status {
@@ -626,7 +633,7 @@ onUnmounted(() => {
 }
 
 .status-checking {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 
@@ -634,28 +641,28 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--success);
 }
 
 .status-not-installed {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 
 .tool-details {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-top: 8px;
 }
 
 .tool-version {
-  font-size: 12px;
-  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
   color: var(--text-secondary);
-  background: var(--bg-secondary);
-  padding: 4px 8px;
+  background: var(--bg);
+  padding: 3px 8px;
   border-radius: 4px;
 }
 
@@ -670,46 +677,48 @@ onUnmounted(() => {
 
 .tool-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 16px;
+  gap: 6px;
+  margin-top: 12px;
 }
 
 .btn-primary {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
-  background: var(--text);
-  color: var(--bg);
+  gap: 5px;
+  padding: 5px 14px;
+  background: var(--accent);
+  color: #fff;
   border: none;
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
   font-weight: 500;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: background 0.1s;
 }
 
 .btn-primary:hover {
-  opacity: 0.9;
+  background: #6d9df8;
 }
 
 .btn-primary:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 .btn-outline {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
+  gap: 5px;
+  padding: 5px 12px;
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.1s;
   text-decoration: none;
 }
 
@@ -718,14 +727,14 @@ onUnmounted(() => {
 }
 
 .btn-small {
-  padding: 6px 12px;
-  font-size: 13px;
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 .install-output {
-  margin-top: 16px;
+  margin-top: 12px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 4px;
   overflow: hidden;
 }
 
@@ -733,19 +742,22 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 12px;
-  background: var(--bg-secondary);
+  padding: 6px 10px;
+  background: var(--bg-active);
   border-bottom: 1px solid var(--border);
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .clear-btn {
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
   cursor: pointer;
+  text-transform: uppercase;
 }
 
 .clear-btn:hover {
@@ -753,13 +765,14 @@ onUnmounted(() => {
 }
 
 .output-content {
-  padding: 12px;
-  font-family: 'SF Mono', Monaco, monospace;
-  font-size: 12px;
-  line-height: 1.6;
+  padding: 10px 12px;
+  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+  font-size: 11px;
+  line-height: 1.7;
   max-height: 200px;
   overflow-y: auto;
-  background: var(--bg);
+  background: #1a1b1e;
+  color: #a8b1c2;
 }
 
 .output-content div {
@@ -769,24 +782,28 @@ onUnmounted(() => {
 
 /* Monitor Section */
 .monitor-section {
-  margin-top: 24px;
+  margin-top: 16px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
+  border-radius: 4px;
+  padding: 12px;
+  background: var(--bg-secondary);
 }
 
 .monitor-section .section-header {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .monitor-section .section-header h3 {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .header-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 
 .empty-monitor {
@@ -794,10 +811,10 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 24px;
+  gap: 6px;
+  padding: 20px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .loading-text {
@@ -807,17 +824,18 @@ onUnmounted(() => {
 .process-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .process-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px;
-  background: var(--bg-secondary);
-  border-radius: 6px;
-  transition: background 0.15s;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  transition: background 0.1s;
 }
 
 .process-item:hover {
@@ -825,11 +843,12 @@ onUnmounted(() => {
 }
 
 .process-indicator {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   background: var(--success);
   border-radius: 50%;
   flex-shrink: 0;
+  box-shadow: 0 0 6px var(--success);
   animation: pulse 2s infinite;
 }
 
@@ -846,96 +865,99 @@ onUnmounted(() => {
 .process-main {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .process-port {
   font-weight: 600;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .process-name {
   font-weight: 600;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .process-pid {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-muted);
-  background: var(--bg);
-  padding: 2px 6px;
-  border-radius: 4px;
+  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+  background: var(--bg-active);
+  padding: 1px 6px;
+  border-radius: 3px;
 }
 
 .process-path {
-  font-size: 12px;
-  color: var(--text-secondary);
-  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .btn-icon-danger {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   background: transparent;
   border: none;
   border-radius: 4px;
   color: var(--text-muted);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.1s;
   flex-shrink: 0;
 }
 
 .btn-icon-danger:hover {
-  background: rgba(239, 68, 68, 0.1);
+  background: var(--danger-light);
   color: var(--danger);
 }
 
 .btn-danger {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
+  gap: 5px;
+  padding: 5px 12px;
   background: var(--danger);
   color: white;
   border: none;
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
   font-weight: 500;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity 0.1s;
 }
 
 .btn-danger:hover {
-  opacity: 0.9;
+  opacity: 0.85;
 }
 
 .btn-danger.btn-small {
-  padding: 6px 12px;
-  font-size: 13px;
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 /* Extensions */
 .extensions-section {
-  margin-top: 12px;
+  margin-top: 10px;
 }
 
 .extensions-toggle {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   background: none;
   border: none;
-  font-size: 13px;
+  font-size: 12px;
+  font-family: inherit;
   color: var(--text-secondary);
   cursor: pointer;
-  padding: 4px 0;
+  padding: 3px 0;
 }
 
 .extensions-toggle:hover {
@@ -953,19 +975,19 @@ onUnmounted(() => {
 .extensions-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
   margin-top: 8px;
   max-height: 200px;
   overflow-y: auto;
 }
 
 .extension-tag {
-  font-size: 11px;
-  font-family: 'SF Mono', Monaco, monospace;
-  padding: 3px 8px;
-  background: var(--bg-secondary);
+  font-size: 10px;
+  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+  padding: 2px 7px;
+  background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 3px;
   color: var(--text-secondary);
 }
 </style>

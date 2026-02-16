@@ -43,14 +43,15 @@ const emit = defineEmits<{
 
 <style scoped>
 .action-bar {
-  height: 65px;
+  height: 44px;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 24px;
-  background: var(--bg);
+  padding: 0 16px;
+  background: var(--bg-secondary);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
+  border-radius: 0 0 8px 8px;
 }
 
 .action-spacer {
@@ -58,30 +59,32 @@ const emit = defineEmits<{
 }
 
 .btn-primary {
-  padding: 8px 16px;
-  background: var(--text);
-  color: var(--bg);
+  padding: 6px 14px;
+  background: var(--accent);
+  color: #fff;
   border: none;
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
   font-weight: 500;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: background 0.1s;
 }
 
 .btn-primary:hover {
-  opacity: 0.9;
+  background: #6d9df8;
 }
 
 .btn-outline {
-  padding: 8px 16px;
-  background: var(--bg);
+  padding: 6px 14px;
+  background: var(--bg-elevated);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.1s;
 }
 
 .btn-outline:hover {

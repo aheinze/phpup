@@ -57,45 +57,53 @@ function selectFile(file: string) {
 <style scoped>
 .content-section {
   flex: 1;
-  padding: 24px;
+  padding: 16px;
   overflow-y: auto;
 }
 
 .section-header {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .section-header h2 {
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .tabs-container {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .tabs-pills {
   display: inline-flex;
-  gap: 4px;
-  padding: 4px;
-  background: var(--bg-secondary);
-  border-radius: 10px;
+  gap: 0;
+  background: var(--bg);
+  border-radius: 4px;
   border: 1px solid var(--border);
+  overflow: hidden;
 }
 
 .tab-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
+  gap: 5px;
+  padding: 5px 12px;
   background: transparent;
   border: none;
-  border-radius: 7px;
-  font-size: 13px;
+  font-size: 12px;
+  font-family: inherit;
   font-weight: 500;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.1s;
+  border-right: 1px solid var(--border);
+}
+
+.tab-pill:last-child {
+  border-right: none;
 }
 
 .tab-pill:hover:not(.active) {
@@ -104,14 +112,13 @@ function selectFile(file: string) {
 }
 
 .tab-pill.active {
-  background: var(--bg);
-  color: var(--text);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  background: var(--bg-active);
+  color: var(--accent);
 }
 
 .tab-icon {
   flex-shrink: 0;
-  opacity: 0.7;
+  opacity: 0.5;
 }
 
 .tab-pill.active .tab-icon {
@@ -120,22 +127,23 @@ function selectFile(file: string) {
 
 .caddyfile-editor {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 4px;
   overflow: hidden;
 }
 
 .caddyfile-textarea {
   width: 100%;
   min-height: 400px;
-  padding: 16px;
+  padding: 12px;
   border: none;
-  background: var(--bg-secondary);
-  font-family: 'SF Mono', Monaco, 'Consolas', monospace;
-  font-size: 13px;
-  line-height: 1.6;
+  background: var(--bg);
+  font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.7;
   color: var(--text);
   resize: vertical;
   outline: none;
+  tab-size: 2;
 }
 
 .caddyfile-textarea::placeholder {

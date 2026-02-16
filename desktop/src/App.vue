@@ -9,6 +9,7 @@ import ActionBar from "./components/ActionBar.vue";
 import AddGroupModal from "./components/AddGroupModal.vue";
 import ConfirmModal from "./components/ConfirmModal.vue";
 import ToolsPanel from "./components/ToolsPanel.vue";
+import TitleBar from "./components/TitleBar.vue";
 
 const store = getStore();
 
@@ -18,14 +19,30 @@ const sidebarWidth = ref(220);
 // IDE detection
 const detectedIde = ref<string | null>(null);
 
+// Keyboard shortcuts
+function handleKeydown(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+    e.preventDefault();
+    if (store.showSettings.value) {
+      store.saveSettings();
+    } else if (store.showCaddyfile.value) {
+      handleSaveCaddyfile();
+    }
+  }
+}
+
 // Initialize on mount
 onMounted(async () => {
+  window.addEventListener("keydown", handleKeydown);
   await store.initialize();
   detectedIde.value = await store.detectIde();
 
   // Periodically check running status
   const interval = setInterval(store.refreshAllStatuses, 5000);
-  onUnmounted(() => clearInterval(interval));
+  onUnmounted(() => {
+    clearInterval(interval);
+    window.removeEventListener("keydown", handleKeydown);
+  });
 });
 
 // Group management
@@ -46,6 +63,19 @@ function handleRemoveConfirm() {
     store.removeProject(store.selectedProject.value);
   }
   showRemoveConfirm.value = false;
+}
+
+// Port conflict
+function handlePortConflictConfirm() {
+  const conflict = store.portConflict.value;
+  if (conflict) {
+    store.portConflict.value = null;
+    store.startProject(conflict.project, conflict.suggestedPort);
+  }
+}
+
+function handlePortConflictCancel() {
+  store.portConflict.value = null;
 }
 
 function handleOpenTools() {
@@ -103,6 +133,8 @@ function handleReorderGroups(fromId: string, toId: string) {
 </script>
 
 <template>
+  <TitleBar />
+
   <!-- Empty state when no projects -->
   <div v-if="store.projects.value.length === 0" class="empty-screen">
     <div class="empty-content">
@@ -131,6 +163,7 @@ function handleReorderGroups(fromId: string, toId: string) {
       @select-project="store.selectProject"
       @start-project="store.startProject"
       @stop-project="store.stopProject"
+      @rename-project="store.renameProject"
       @add-project="store.addProject"
       @add-group="store.showAddGroup.value = true"
       @toggle-group="store.toggleGroup"
@@ -160,6 +193,16 @@ function handleReorderGroups(fromId: string, toId: string) {
       @cancel="showRemoveConfirm = false"
     />
 
+    <!-- Port Conflict Modal -->
+    <ConfirmModal
+      :show="!!store.portConflict.value"
+      title="Port In Use"
+      :message="`Port ${store.portConflict.value?.project.port} is already in use. Start on port ${store.portConflict.value?.suggestedPort} instead?`"
+      :confirm-text="`Use ${store.portConflict.value?.suggestedPort}`"
+      @confirm="handlePortConflictConfirm"
+      @cancel="handlePortConflictCancel"
+    />
+
     <!-- Main Content -->
     <main class="main">
       <!-- Tools Panel -->
@@ -180,11 +223,11 @@ function handleReorderGroups(fromId: string, toId: string) {
           <button
             v-if="store.selectedProject.value.hasConfig"
             class="header-icon-btn"
-            :class="{ 'header-icon-success': !store.selectedProject.value.isRunning, 'header-icon-danger': store.selectedProject.value.isRunning }"
-            @click="store.selectedProject.value.isRunning ? store.stopProject(store.selectedProject.value!) : store.startProject(store.selectedProject.value!)"
-            :title="store.selectedProject.value.isRunning ? 'Stop' : 'Start'"
+            :class="{ 'header-icon-success': store.selectedProject.value.status === 'stopped' || store.selectedProject.value.status === 'crashed', 'header-icon-danger': store.selectedProject.value.status === 'running' || store.selectedProject.value.status === 'starting' }"
+            @click="(store.selectedProject.value.status === 'running' || store.selectedProject.value.status === 'starting') ? store.stopProject(store.selectedProject.value!) : store.startProject(store.selectedProject.value!)"
+            :title="(store.selectedProject.value.status === 'running' || store.selectedProject.value.status === 'starting') ? 'Stop' : 'Start'"
           >
-            <svg v-if="!store.selectedProject.value.isRunning" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <svg v-if="store.selectedProject.value.status === 'stopped' || store.selectedProject.value.status === 'crashed'" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
               <path d="M4 2.5v11l9-5.5-9-5.5z"/>
             </svg>
             <svg v-else width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
@@ -329,32 +372,48 @@ function handleReorderGroups(fromId: string, toId: string) {
 }
 
 :root {
-  --bg: #ffffff;
-  --bg-secondary: #fafafa;
-  --bg-hover: #f5f5f5;
-  --bg-active: #f0f0f0;
-  --text: #1a1a1a;
-  --text-secondary: #666;
-  --text-muted: #999;
-  --border: #e5e5e5;
-  --accent: #e11d48;
-  --accent-light: #fef2f2;
-  --success: #22c55e;
-  --danger: #ef4444;
+  --bg-canvas: #16171a;
+  --bg: #1e1f22;
+  --bg-secondary: #2b2d30;
+  --bg-hover: #35373b;
+  --bg-active: #3c3f41;
+  --bg-elevated: #393b40;
+  --text: #bcbec4;
+  --text-secondary: #8c8e94;
+  --text-muted: #5e6068;
+  --border: #393b40;
+  --accent: #548af7;
+  --accent-light: rgba(84, 138, 247, 0.12);
+  --success: #57a64a;
+  --success-light: rgba(87, 166, 74, 0.15);
+  --danger: #e05555;
+  --danger-light: rgba(224, 85, 85, 0.12);
+  --warning: #c78b31;
+  --warning-light: rgba(199, 139, 49, 0.15);
 }
 
 html, body, #app {
   height: 100%;
-  background: var(--bg);
+  background: var(--bg-canvas);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 14px;
+  font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Consolas', monospace;
+  font-size: 13px;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
 }
 
 .app {
   display: flex;
-  height: 100%;
+  flex: 1;
+  gap: 6px;
+  padding: 0 8px 8px;
+  background: var(--bg-canvas);
+  min-height: 0;
 }
 
 .main {
@@ -363,6 +422,7 @@ html, body, #app {
   flex-direction: column;
   background: var(--bg);
   overflow: hidden;
+  border-radius: 8px;
 }
 
 .empty-main {
@@ -371,19 +431,23 @@ html, body, #app {
   align-items: center;
   justify-content: center;
   color: var(--text-muted);
+  font-size: 13px;
 }
 
 .project-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 20px 24px;
+  gap: 8px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  border-radius: 8px 8px 0 0;
 }
 
 .project-header h1 {
-  font-size: 20px;
+  font-size: 14px;
   font-weight: 600;
+  color: var(--text);
 }
 
 .header-spacer {
@@ -394,14 +458,14 @@ html, body, #app {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   background: transparent;
   color: var(--text-muted);
   border: none;
-  border-radius: 6px;
+  border-radius: 4px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.1s;
 }
 
 .header-icon-btn:hover {
@@ -411,37 +475,38 @@ html, body, #app {
 
 .header-icon-btn.active {
   background: var(--bg-active);
-  color: var(--text);
+  color: var(--accent);
 }
 
 .header-icon-danger:hover {
   color: var(--danger);
-  background: rgba(239, 68, 68, 0.1);
+  background: var(--danger-light);
 }
 
 .header-icon-success:hover {
   color: var(--success);
-  background: rgba(34, 197, 94, 0.1);
+  background: var(--success-light);
 }
 
 .header-separator {
   width: 1px;
-  height: 20px;
+  height: 16px;
   background: var(--border);
-  margin: 0 4px;
+  margin: 0 2px;
 }
 
 .content-section {
   flex: 1;
-  padding: 24px;
+  padding: 16px;
   overflow-y: auto;
 }
 
 .init-card {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 6px;
   padding: 24px;
   text-align: center;
+  background: var(--bg-secondary);
 }
 
 .init-card p {
@@ -449,18 +514,18 @@ html, body, #app {
 }
 
 .init-hint {
-  font-size: 13px;
+  font-size: 12px;
   margin-top: 8px;
   color: var(--text-muted);
 }
 
 /* Empty screen state */
 .empty-screen {
-  height: 100%;
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg);
+  background: var(--bg-canvas);
 }
 
 .empty-content {
@@ -470,9 +535,9 @@ html, body, #app {
 }
 
 .empty-content h1 {
-  font-size: 24px;
+  font-size: 16px;
   font-weight: 600;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
   color: var(--text);
 }
 
@@ -480,66 +545,67 @@ html, body, #app {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 20px;
+  padding: 8px 16px;
   background: var(--accent);
-  color: white;
+  color: #fff;
   border: none;
-  border-radius: 8px;
-  font-size: 14px;
+  border-radius: 4px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.1s;
+  font-family: inherit;
 }
 
 .btn-primary:hover {
-  background: #be1b3f;
+  background: #6d9df8;
 }
 
 .btn-large {
-  padding: 12px 24px;
-  font-size: 15px;
+  padding: 10px 20px;
 }
 
 /* Notifications */
 .notification-container {
   position: fixed;
-  bottom: 16px;
-  right: 16px;
+  bottom: 12px;
+  right: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   z-index: 1000;
-  max-width: 400px;
+  max-width: 380px;
 }
 
 .notification-toast {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
-  border-radius: 8px;
-  font-size: 13px;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 4px;
+  font-size: 12px;
   cursor: pointer;
-  animation: slide-in 0.2s ease;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  animation: slide-in 0.15s ease;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border);
 }
 
 .notification-toast.error {
-  background: #fee2e2;
-  color: #991b1b;
-  border: 1px solid #fecaca;
+  background: #3c2020;
+  color: #e88;
+  border-color: #5a2d2d;
 }
 
 .notification-toast.warning {
-  background: #fef3c7;
-  color: #92400e;
-  border: 1px solid #fde68a;
+  background: #3c3420;
+  color: #e8c36a;
+  border-color: #5a4d2d;
 }
 
 .notification-toast.info {
-  background: #dbeafe;
-  color: #1e40af;
-  border: 1px solid #bfdbfe;
+  background: #1e2a3c;
+  color: #7ab0e8;
+  border-color: #2d3d5a;
 }
 
 @keyframes slide-in {

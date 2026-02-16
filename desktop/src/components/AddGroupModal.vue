@@ -48,7 +48,7 @@ function handleClose() {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(0, 0, 0, 0.5);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -56,64 +56,71 @@ function handleClose() {
 }
 
 .modal {
-  background: var(--bg);
-  border-radius: 12px;
-  padding: 24px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 20px;
   width: 320px;
   max-width: 90%;
-  box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
 }
 
 .modal h3 {
-  font-size: 18px;
-  margin-bottom: 16px;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 14px;
 }
 
 .modal input {
   width: 100%;
-  padding: 10px 12px;
+  padding: 7px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--bg);
+  color: var(--text);
   outline: none;
 }
 
 .modal input:focus {
-  border-color: var(--text-muted);
+  border-color: var(--accent);
 }
 
 .modal-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 20px;
+  margin-top: 16px;
 }
 
 .btn-primary {
-  padding: 8px 16px;
-  background: var(--text);
-  color: var(--bg);
+  padding: 6px 14px;
+  background: var(--accent);
+  color: #fff;
   border: none;
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
   font-weight: 500;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: background 0.1s;
 }
 
 .btn-primary:hover {
-  opacity: 0.9;
+  background: #6d9df8;
 }
 
 .btn-outline {
-  padding: 8px 16px;
-  background: var(--bg);
+  padding: 6px 14px;
+  background: var(--bg-elevated);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.1s;
 }
 
 .btn-outline:hover {

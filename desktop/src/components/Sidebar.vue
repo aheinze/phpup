@@ -19,6 +19,7 @@ const emit = defineEmits<{
   selectProject: [project: Project];
   startProject: [project: Project];
   stopProject: [project: Project];
+  renameProject: [project: Project, name: string];
   addProject: [];
   addGroup: [];
   toggleGroup: [group: Group];
@@ -220,6 +221,7 @@ function handleRenameGroup(group: Group, newName: string) {
             @select="emit('selectProject', $event)"
             @start="emit('startProject', $event)"
             @stop="emit('stopProject', $event)"
+            @rename="(project: any, name: string) => emit('renameProject', project, name)"
             @dragstart="onProjectDragStart"
             @dragend="onDragEnd"
             @dragover="onProjectDragOver"
@@ -233,7 +235,7 @@ function handleRenameGroup(group: Group, newName: string) {
       <div
         v-if="ungroupedProjects.length > 0 || groups.length > 0"
         class="ungrouped"
-        :class="{ 'drag-over': dragOverUngrouped }"
+        :class="{ 'drag-over': dragOverUngrouped, 'drag-active': !!draggedProject }"
         @dragover="onUngroupedDragOver"
         @dragleave="onDragLeave"
         @drop="onUngroupedDrop"
@@ -253,6 +255,10 @@ function handleRenameGroup(group: Group, newName: string) {
           @dragleave="onDragLeave"
           @drop="onProjectDrop"
         />
+        <!-- Drop hint when dragging and no ungrouped projects exist -->
+        <div v-if="ungroupedProjects.length === 0 && !!draggedProject" class="drop-hint">
+          Drop here to ungroup
+        </div>
       </div>
 
       <div v-if="projects.length === 0" class="empty-state">
@@ -275,8 +281,7 @@ function handleRenameGroup(group: Group, newName: string) {
       <div class="footer-spacer"></div>
       <button class="icon-btn" @click="emit('openTools')" title="Tools">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M10 2a4 4 0 00-3.8 5.2L2 11.5V14h2.5l4.3-4.2A4 4 0 1010 2z"/>
-          <circle cx="11" cy="5" r="1" fill="currentColor"/>
+          <path d="M14 4.5L11.5 7l-1-.5-.5-1L12.5 3A3.5 3.5 0 009 6.5L4.5 11a1.5 1.5 0 102 2L11 8.5A3.5 3.5 0 0014 4.5z"/>
         </svg>
       </button>
     </div>
@@ -294,11 +299,11 @@ function handleRenameGroup(group: Group, newName: string) {
 .sidebar {
   min-width: 160px;
   max-width: 400px;
-  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  background: var(--bg-secondary);
   flex-shrink: 0;
+  border-radius: 8px;
 }
 
 .resize-handle {
@@ -307,27 +312,29 @@ function handleRenameGroup(group: Group, newName: string) {
   background: transparent;
   transition: background 0.15s;
   flex-shrink: 0;
+  margin: 8px 0;
+  border-radius: 2px;
 }
 
 .resize-handle:hover,
 .resize-handle.resizing {
-  background: var(--border);
+  background: var(--accent);
 }
 
 .sidebar-header {
-  padding: 16px 16px 8px;
+  padding: 12px 12px 6px;
 }
 
 .sidebar-title {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.8px;
 }
 
 .sidebar-search {
-  padding: 0 16px 8px;
+  padding: 0 12px 6px;
 }
 
 .search-wrapper {
@@ -337,7 +344,7 @@ function handleRenameGroup(group: Group, newName: string) {
 
 .search-icon {
   position: absolute;
-  left: 10px;
+  left: 8px;
   top: 50%;
   transform: translateY(-50%);
   color: var(--text-muted);
@@ -345,32 +352,34 @@ function handleRenameGroup(group: Group, newName: string) {
 
 .search-input {
   width: 100%;
-  padding: 6px 10px 6px 32px;
+  padding: 5px 8px 5px 28px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 13px;
-  background: var(--bg-secondary);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
+  background: var(--bg);
+  color: var(--text);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color 0.1s;
 }
 
 .search-input:focus {
-  border-color: var(--text-muted);
+  border-color: var(--accent);
 }
 
 .project-list {
   flex: 1;
   overflow-y: auto;
-  padding: 0 8px;
+  padding: 0 6px;
 }
 
 .sidebar-footer {
-  height: 65px;
-  padding: 0 16px;
+  height: 44px;
+  padding: 0 12px;
   border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   flex-shrink: 0;
 }
 
@@ -379,24 +388,25 @@ function handleRenameGroup(group: Group, newName: string) {
 }
 
 .group {
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .group-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
+  gap: 4px;
+  padding: 5px 8px;
   cursor: pointer;
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--text-secondary);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.8px;
 }
 
 .group-header:hover {
   background: var(--bg-hover);
+  color: var(--text-secondary);
 }
 
 .group-header.drag-over {
@@ -404,7 +414,7 @@ function handleRenameGroup(group: Group, newName: string) {
 }
 
 .chevron {
-  transition: transform 0.2s;
+  transition: transform 0.15s;
   flex-shrink: 0;
 }
 
@@ -420,14 +430,16 @@ function handleRenameGroup(group: Group, newName: string) {
   flex: 1;
   background: var(--bg);
   border: 1px solid var(--accent);
-  border-radius: 4px;
-  padding: 2px 6px;
-  font-size: 12px;
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--text);
   outline: none;
 }
 
 .group-projects {
-  margin-left: 24px;
+  margin-left: 16px;
 }
 
 .delete-btn {
@@ -435,36 +447,51 @@ function handleRenameGroup(group: Group, newName: string) {
 }
 
 .group-header:hover .delete-btn {
-  opacity: 0.5;
+  opacity: 0.4;
 }
 
 .delete-btn:hover {
   opacity: 1 !important;
 }
 
+.ungrouped.drag-active {
+  min-height: 36px;
+}
+
 .ungrouped.drag-over {
   background: var(--accent-light);
-  border-radius: 6px;
+  border-radius: 4px;
+}
+
+.drop-hint {
+  padding: 8px 12px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  margin: 2px 0;
 }
 
 .empty-state {
   text-align: center;
-  padding: 40px 20px;
+  padding: 40px 16px;
   color: var(--text-muted);
+  font-size: 12px;
 }
 
 .icon-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   background: transparent;
   border: none;
   border-radius: 4px;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.1s;
 }
 
 .icon-btn:hover {

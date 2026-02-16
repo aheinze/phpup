@@ -142,66 +142,74 @@ function updateSetting<K extends keyof ProjectSettings>(key: K, value: ProjectSe
 <style scoped>
 .content-section {
   flex: 1;
-  padding: 24px;
+  padding: 16px;
   overflow-y: auto;
 }
 
 .section-header {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .section-header h2 {
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .section-header:not(:first-child) {
-  margin-top: 32px;
+  margin-top: 24px;
 }
 
 .settings-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 12px;
 }
 
 .setting-row {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .setting-row label {
-  font-size: 13px;
-  color: var(--text-secondary);
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .setting-row input {
-  padding: 8px 12px;
+  padding: 6px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--bg);
+  color: var(--text);
   outline: none;
 }
 
 .setting-row input:focus {
-  border-color: var(--text-muted);
+  border-color: var(--accent);
 }
 
 .options-list {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 6px;
   overflow: hidden;
+  background: var(--bg-secondary);
 }
 
 .option-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--border);
+  font-size: 13px;
 }
 
 .option-row:last-child {
@@ -211,17 +219,19 @@ function updateSetting<K extends keyof ProjectSettings>(key: K, value: ProjectSe
 .segmented {
   display: flex;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 4px;
   overflow: hidden;
 }
 
 .segmented button {
-  padding: 6px 12px;
+  padding: 4px 10px;
   background: var(--bg);
   border: none;
-  font-size: 13px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.1s;
 }
 
 .segmented button:not(:last-child) {
@@ -229,17 +239,18 @@ function updateSetting<K extends keyof ProjectSettings>(key: K, value: ProjectSe
 }
 
 .segmented button.active {
-  background: var(--text);
-  color: var(--bg);
+  background: var(--accent);
+  color: #fff;
 }
 
 .toggle-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
+  font-size: 13px;
 }
 
 .toggle-row:last-child {
@@ -251,12 +262,12 @@ function updateSetting<K extends keyof ProjectSettings>(key: K, value: ProjectSe
 }
 
 .toggle {
-  width: 44px;
-  height: 24px;
-  background: var(--border);
-  border-radius: 12px;
+  width: 36px;
+  height: 20px;
+  background: var(--bg-active);
+  border-radius: 10px;
   position: relative;
-  transition: background 0.2s;
+  transition: background 0.15s;
 }
 
 .toggle::after {
@@ -264,12 +275,11 @@ function updateSetting<K extends keyof ProjectSettings>(key: K, value: ProjectSe
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 20px;
-  height: 20px;
-  background: white;
+  width: 16px;
+  height: 16px;
+  background: var(--text-muted);
   border-radius: 50%;
-  transition: transform 0.2s;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  transition: all 0.15s;
 }
 
 .toggle-row input:checked + .toggle {
@@ -277,6 +287,7 @@ function updateSetting<K extends keyof ProjectSettings>(key: K, value: ProjectSe
 }
 
 .toggle-row input:checked + .toggle::after {
-  transform: translateX(20px);
+  transform: translateX(16px);
+  background: #fff;
 }
 </style>
