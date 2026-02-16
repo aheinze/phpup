@@ -15,9 +15,13 @@ const store = getStore();
 // Sidebar width
 const sidebarWidth = ref(220);
 
+// IDE detection
+const detectedIde = ref<string | null>(null);
+
 // Initialize on mount
 onMounted(async () => {
   await store.initialize();
+  detectedIde.value = await store.detectIde();
 
   // Periodically check running status
   const interval = setInterval(store.refreshAllStatuses, 5000);
@@ -47,6 +51,21 @@ function handleRemoveConfirm() {
 function handleOpenTools() {
   store.selectedProject.value = null;
   store.showTools.value = true;
+}
+
+async function handleSaveCaddyfile() {
+  const { valid, error } = await store.validateCaddyfile();
+  if (!valid && error) {
+    store.addNotification(`Caddyfile validation failed: ${error.split("\n")[0]}`, "warning");
+    // Still save, but warn
+  }
+  await store.saveCaddyfile();
+}
+
+function handleOpenIde() {
+  if (store.selectedProject.value) {
+    store.openInIde(store.selectedProject.value);
+  }
 }
 
 // Project reordering
@@ -253,8 +272,10 @@ function handleReorderGroups(fromId: string, toId: string) {
           :project="store.selectedProject.value"
           :host="store.settings.value.host"
           :output="store.projectOutput.value"
+          :detected-ide="detectedIde"
           @open-browser="store.openInBrowser(store.selectedProject.value!)"
           @clear-output="store.projectOutput.value = []"
+          @open-ide="handleOpenIde"
         />
 
         <!-- Action Bar (only for unconfigured or editing mode) -->
@@ -268,10 +289,35 @@ function handleReorderGroups(fromId: string, toId: string) {
           @cancel-settings="store.showSettings.value = false"
           @save-settings="store.saveSettings"
           @cancel-caddyfile="store.showCaddyfile.value = false"
-          @save-caddyfile="store.saveCaddyfile"
+          @save-caddyfile="handleSaveCaddyfile"
         />
       </template>
     </main>
+
+    <!-- Notifications -->
+    <div v-if="store.notifications.value.length > 0" class="notification-container">
+      <div
+        v-for="notif in store.notifications.value"
+        :key="notif.id"
+        class="notification-toast"
+        :class="notif.type"
+        @click="store.dismissNotification(notif.id)"
+      >
+        <svg v-if="notif.type === 'error'" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="8" cy="8" r="6.5"/>
+          <path d="M5.5 5.5l5 5M10.5 5.5l-5 5"/>
+        </svg>
+        <svg v-else-if="notif.type === 'warning'" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M8 2L1 14h14L8 2z"/>
+          <path d="M8 6v4M8 12v1"/>
+        </svg>
+        <svg v-else width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="8" cy="8" r="6.5"/>
+          <path d="M8 5v3M8 10v1"/>
+        </svg>
+        <span>{{ notif.message }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -452,5 +498,52 @@ html, body, #app {
 .btn-large {
   padding: 12px 24px;
   font-size: 15px;
+}
+
+/* Notifications */
+.notification-container {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1000;
+  max-width: 400px;
+}
+
+.notification-toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  animation: slide-in 0.2s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.notification-toast.error {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+
+.notification-toast.warning {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+
+.notification-toast.info {
+  background: #dbeafe;
+  color: #1e40af;
+  border: 1px solid #bfdbfe;
+}
+
+@keyframes slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
 }
 </style>

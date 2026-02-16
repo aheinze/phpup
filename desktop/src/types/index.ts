@@ -6,6 +6,7 @@ export interface Project {
   path: string;
   port: string;
   isRunning: boolean;
+  status: ProjectStatus;
   hasConfig: boolean;
   docroot: string;
   groupId?: string;
@@ -24,14 +25,18 @@ export interface RunningProcess {
   output: string[];
 }
 
+export type ProjectStatus = "stopped" | "starting" | "running" | "crashed";
+
 export interface ProjectSettings {
   host: string;
   port: string;
   domain: string;
   docroot: string;
+  phpThreads: string;
   httpsMode: "off" | "local" | "on";
   workerMode: boolean;
   watchMode: boolean;
   compression: boolean;
   openBrowser: boolean;
+  xdebug: boolean;
 }

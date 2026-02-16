@@ -11,6 +11,15 @@ function shellEscape(str: string): string {
   return "'" + str.replace(/'/g, "'\\''") + "'";
 }
 
+// Maximum output lines to keep per process
+const MAX_OUTPUT_LINES = 1000;
+
+function capOutput(output: string[]) {
+  if (output.length > MAX_OUTPUT_LINES) {
+    output.splice(0, output.length - MAX_OUTPUT_LINES);
+  }
+}
+
 // Validate port is numeric
 function isValidPort(port: string): boolean {
   const num = parseInt(port, 10);
@@ -42,12 +51,20 @@ const settings = ref<ProjectSettings>({
   port: "8000",
   domain: "",
   docroot: "./public",
+  phpThreads: "auto",
   httpsMode: "off",
   workerMode: false,
   watchMode: false,
   compression: true,
   openBrowser: true,
+  xdebug: false,
 });
+
+// Notifications
+const notifications = ref<Array<{ id: string; message: string; type: "error" | "warning" | "info" }>>([]);
+
+// PHP extensions cache
+const phpExtensions = ref<string[]>([]);
 
 // Phpup state
 const phpupCommand = ref("phpup");
@@ -57,7 +74,7 @@ const phpupReady = ref(false);
 const configDir = "~/.config/phpup-desktop";
 const configFile = `${configDir}/projects.json`;
 
-export function useStore() {
+function useStore() {
   // Computed
   const filteredProjects = computed(() => {
     if (!searchQuery.value) return projects.value;
@@ -104,7 +121,17 @@ export function useStore() {
       return resourcePath;
     } catch (e) {
       console.error("Failed to resolve bundled phpup:", e);
-      return "/home/artur/DEV/phpup/phpup";
+      // Fall back to looking in common locations
+      const fallbackCheck = Command.create("run-bash", [
+        "-c",
+        "command -v phpup || test -x ./phpup && echo ./phpup",
+      ]);
+      const fallbackResult = await fallbackCheck.execute();
+      if (fallbackResult.code === 0 && fallbackResult.stdout.trim()) {
+        return fallbackResult.stdout.trim();
+      }
+      console.error("phpup not found anywhere");
+      return "phpup";
     }
   }
 
@@ -119,10 +146,10 @@ export function useStore() {
       if (result.code === 0 && result.stdout.trim()) {
         const data = JSON.parse(result.stdout);
         if (Array.isArray(data)) {
-          projects.value = data;
+          projects.value = data.map((p: Project) => ({ ...p, status: p.status || "stopped" }));
           groups.value = [];
         } else {
-          projects.value = data.projects || [];
+          projects.value = (data.projects || []).map((p: Project) => ({ ...p, status: p.status || "stopped" }));
           groups.value = data.groups || [];
         }
         refreshFavicons();
@@ -136,9 +163,10 @@ export function useStore() {
     try {
       const data = { groups: groups.value, projects: projects.value };
       const json = JSON.stringify(data, null, 2);
+      // Use printf to avoid heredoc delimiter collision issues
       const command = Command.create("run-bash", [
         "-c",
-        `mkdir -p ${configDir} && cat > ${configFile} << 'EOF'\n${json}\nEOF`,
+        `mkdir -p ${configDir} && printf '%s' ${shellEscape(json)} > ${configFile}`,
       ]);
       await command.execute();
     } catch (e) {
@@ -265,6 +293,7 @@ export function useStore() {
       path,
       port: configPort,
       isRunning: false,
+      status: "stopped",
       hasConfig,
       docroot: configDocroot,
       favicon,
@@ -312,6 +341,7 @@ export function useStore() {
         const config = result.stdout;
         const hostMatch = config.match(/HOST=["']?([^"'\n]+)["']?/);
         const domainMatch = config.match(/DOMAIN=["']?([^"'\n]+)["']?/);
+        const threadsMatch = config.match(/PHP_THREADS=["']?([^"'\n]+)["']?/);
         const httpsMatch = config.match(/HTTPS_MODE=["']?([^"'\n]+)["']?/);
         const workerMatch = config.match(/WORKER_MODE=["']?(true|false|1|0)["']?/i);
         const watchMatch = config.match(/WATCH_MODE=["']?(true|false|1|0)["']?/i);
@@ -320,11 +350,15 @@ export function useStore() {
 
         if (hostMatch) settings.value.host = hostMatch[1];
         if (domainMatch) settings.value.domain = domainMatch[1];
+        if (threadsMatch) settings.value.phpThreads = threadsMatch[1];
         if (httpsMatch) settings.value.httpsMode = httpsMatch[1] as "off" | "local" | "on";
         if (workerMatch) settings.value.workerMode = ["true", "1"].includes(workerMatch[1].toLowerCase());
         if (watchMatch) settings.value.watchMode = ["true", "1"].includes(watchMatch[1].toLowerCase());
         if (compressionMatch) settings.value.compression = ["true", "1"].includes(compressionMatch[1].toLowerCase());
         if (browserMatch) settings.value.openBrowser = ["true", "1"].includes(browserMatch[1].toLowerCase());
+
+        const xdebugMatch = config.match(/XDEBUG=["']?(true|false|1|0)["']?/i);
+        if (xdebugMatch) settings.value.xdebug = ["true", "1"].includes(xdebugMatch[1].toLowerCase());
       }
     }
 
@@ -358,18 +392,20 @@ HOST="${settings.value.host}"
 PORT="${settings.value.port}"
 DOMAIN="${settings.value.domain}"
 DOCROOT="${settings.value.docroot}"
+PHP_THREADS="${settings.value.phpThreads}"
 HTTPS_MODE="${settings.value.httpsMode}"
 WORKER_MODE="${settings.value.workerMode ? 1 : 0}"
 WATCH_MODE="${settings.value.watchMode ? 1 : 0}"
 COMPRESSION="${settings.value.compression ? 1 : 0}"
 OPEN_BROWSER="${settings.value.openBrowser ? 1 : 0}"
+XDEBUG="${settings.value.xdebug ? 1 : 0}"
 `;
 
     const phpupDir = selectedProject.value.path + "/.phpup";
     const configPath = phpupDir + "/config";
     const command = Command.create("run-bash", [
       "-c",
-      `mkdir -p ${shellEscape(phpupDir)} && cat > ${shellEscape(configPath)} << 'EOF'\n${config}\nEOF`,
+      `mkdir -p ${shellEscape(phpupDir)} && printf '%s' ${shellEscape(config)} > ${shellEscape(configPath)}`,
     ]);
     await command.execute();
 
@@ -432,7 +468,7 @@ OPEN_BROWSER="${settings.value.openBrowser ? 1 : 0}"
     const caddyfilePath = selectedProject.value.path + "/.phpup/" + selectedCaddyfile.value;
     const command = Command.create("run-bash", [
       "-c",
-      `cat > ${shellEscape(caddyfilePath)} << 'CADDYFILE_EOF'\n${caddyfileContent.value}\nCADDYFILE_EOF`,
+      `printf '%s' ${shellEscape(caddyfileContent.value)} > ${shellEscape(caddyfilePath)}`,
     ]);
     await command.execute();
 
@@ -440,22 +476,69 @@ OPEN_BROWSER="${settings.value.openBrowser ? 1 : 0}"
     projectOutput.value.push(`${selectedCaddyfile.value} saved.`);
   }
 
+  // Config validation
+  function validateSettings(): string[] {
+    const errors: string[] = [];
+    const port = parseInt(settings.value.port, 10);
+    if (isNaN(port) || port < 1 || port > 65535) {
+      errors.push(`Invalid port: ${settings.value.port} (must be 1-65535)`);
+    }
+    if (settings.value.host && !/^[\w.-]+$/.test(settings.value.host)) {
+      errors.push(`Invalid host: ${settings.value.host}`);
+    }
+    if (settings.value.domain && !/^[\w.-]+$/.test(settings.value.domain)) {
+      errors.push(`Invalid domain: ${settings.value.domain}`);
+    }
+    if (settings.value.phpThreads !== "auto") {
+      const threads = parseInt(settings.value.phpThreads, 10);
+      if (isNaN(threads) || threads < 1 || threads > 256) {
+        errors.push(`Invalid PHP threads: ${settings.value.phpThreads} (must be 1-256 or "auto")`);
+      }
+    }
+    return errors;
+  }
+
+  // Notification helpers
+  function addNotification(message: string, type: "error" | "warning" | "info" = "info") {
+    const id = Date.now().toString();
+    notifications.value.push({ id, message, type });
+    setTimeout(() => {
+      notifications.value = notifications.value.filter((n) => n.id !== id);
+    }, 8000);
+  }
+
+  function dismissNotification(id: string) {
+    notifications.value = notifications.value.filter((n) => n.id !== id);
+  }
+
   // Server management
   async function startProject(project: Project) {
     if (project.isRunning) return;
 
+    // Validate config before starting
+    const errors = validateSettings();
+    if (errors.length > 0) {
+      projectOutput.value = ["Configuration errors:", ...errors.map((e) => `  - ${e}`)];
+      addNotification(errors[0], "error");
+      return;
+    }
+
     projectOutput.value = ["Starting server..."];
+    project.status = "starting";
 
     const args: string[] = [];
     args.push("--port", project.port);
     args.push("--docroot", project.docroot);
     if (settings.value.host !== "127.0.0.1") args.push("--host", settings.value.host);
     if (settings.value.domain) args.push("--domain", settings.value.domain);
+    if (settings.value.phpThreads && settings.value.phpThreads !== "auto") args.push("--php-threads", settings.value.phpThreads);
     if (settings.value.httpsMode !== "off") args.push("--https", settings.value.httpsMode);
     if (settings.value.workerMode) args.push("--worker");
     if (settings.value.watchMode) args.push("--watch");
     if (!settings.value.compression) args.push("--no-compression");
-    if (!settings.value.openBrowser) args.push("--no-browser");
+    if (settings.value.openBrowser) args.push("--open");
+    else args.push("--no-open");
+    if (settings.value.xdebug) args.push("--xdebug");
 
     const cmdString = `cd ${shellEscape(project.path)} && ${shellEscape(phpupCommand.value)} ${args.map(shellEscape).join(" ")} 2>&1`;
     projectOutput.value.push(`Running: ${cmdString}`);
@@ -463,9 +546,16 @@ OPEN_BROWSER="${settings.value.openBrowser ? 1 : 0}"
     try {
       const command = Command.create("run-bash", ["-c", cmdString]);
       const output: string[] = ["Starting server...", `Running: ${cmdString}`];
+      let serverReady = false;
 
       command.stdout.on("data", (data) => {
         output.push(data);
+        capOutput(output);
+        // Detect when server is actually listening
+        if (!serverReady && (data.includes("Listening on") || data.includes("serving") || data.includes("Started"))) {
+          serverReady = true;
+          project.status = "running";
+        }
         if (selectedProject.value?.id === project.id) {
           projectOutput.value = [...output];
         }
@@ -473,22 +563,40 @@ OPEN_BROWSER="${settings.value.openBrowser ? 1 : 0}"
 
       command.stderr.on("data", (data) => {
         output.push(data);
+        capOutput(output);
+        if (!serverReady && (data.includes("Listening on") || data.includes("serving") || data.includes("Started"))) {
+          serverReady = true;
+          project.status = "running";
+        }
         if (selectedProject.value?.id === project.id) {
           projectOutput.value = [...output];
         }
       });
 
-      command.on("close", () => {
+      command.on("close", (payload) => {
+        const wasRunning = project.isRunning;
         project.isRunning = false;
         runningProcesses.value.delete(project.id);
-        output.push("\n[Server stopped]");
+
+        // Detect crash: exited with error while it was supposed to be running
+        if (wasRunning && payload && typeof payload === "object" && "code" in payload && payload.code !== 0) {
+          project.status = "crashed";
+          output.push(`\n[Server crashed with exit code ${payload.code}]`);
+          addNotification(`${project.name} crashed (exit code ${payload.code})`, "error");
+        } else {
+          project.status = "stopped";
+          output.push("\n[Server stopped]");
+        }
         if (selectedProject.value?.id === project.id) {
           projectOutput.value = [...output];
         }
       });
 
       command.on("error", (err) => {
+        project.status = "crashed";
+        project.isRunning = false;
         output.push(`\n[Error: ${err}]`);
+        addNotification(`${project.name}: ${err}`, "error");
         if (selectedProject.value?.id === project.id) {
           projectOutput.value = [...output];
         }
@@ -497,8 +605,17 @@ OPEN_BROWSER="${settings.value.openBrowser ? 1 : 0}"
       const child = await command.spawn();
       runningProcesses.value.set(project.id, { project, child, output });
       project.isRunning = true;
+
+      // Auto-transition to running after timeout if no signal detected
+      setTimeout(() => {
+        if (project.status === "starting" && project.isRunning) {
+          project.status = "running";
+        }
+      }, 5000);
     } catch (err) {
+      project.status = "crashed";
       projectOutput.value.push(`\n[Failed to start: ${err}]`);
+      addNotification(`Failed to start ${project.name}: ${err}`, "error");
       console.error("Failed to start project:", err);
     }
 
@@ -522,6 +639,7 @@ OPEN_BROWSER="${settings.value.openBrowser ? 1 : 0}"
     }
 
     project.isRunning = false;
+    project.status = "stopped";
     projectOutput.value.push("[Server stopped]");
   }
 
@@ -569,6 +687,14 @@ OPEN_BROWSER="${settings.value.openBrowser ? 1 : 0}"
         }
       }
       project.isRunning = isRunning;
+      // Only update status if not managed by a running process handler
+      if (!runningProcesses.value.has(project.id)) {
+        if (isRunning && project.status !== "running") {
+          project.status = "running";
+        } else if (!isRunning && project.status !== "crashed") {
+          project.status = "stopped";
+        }
+      }
     }
   }
 
@@ -620,6 +746,81 @@ OPEN_BROWSER="${settings.value.openBrowser ? 1 : 0}"
     saveData();
   }
 
+  // Open in IDE
+  async function openInIde(project: Project) {
+    // Try VS Code first, then PHPStorm, then generic xdg-open
+    const escapedPath = shellEscape(project.path);
+    const cmd = Command.create("run-bash", [
+      "-c",
+      `command -v code >/dev/null 2>&1 && exec code ${escapedPath} || ` +
+      `command -v phpstorm >/dev/null 2>&1 && exec phpstorm ${escapedPath} || ` +
+      `command -v subl >/dev/null 2>&1 && exec subl ${escapedPath} || ` +
+      `echo "no-ide"`,
+    ]);
+    const result = await cmd.execute();
+    if (result.stdout.trim() === "no-ide") {
+      addNotification("No IDE found (tried: code, phpstorm, subl)", "warning");
+    }
+  }
+
+  async function detectIde(): Promise<string | null> {
+    const checks = [
+      { cmd: "code", name: "VS Code" },
+      { cmd: "phpstorm", name: "PhpStorm" },
+      { cmd: "subl", name: "Sublime Text" },
+    ];
+    for (const { cmd, name } of checks) {
+      const result = await Command.create("run-bash", ["-c", `command -v ${cmd} 2>/dev/null`]).execute();
+      if (result.code === 0) return name;
+    }
+    return null;
+  }
+
+  // PHP extensions
+  async function loadPhpExtensions() {
+    try {
+      const cmd = Command.create("run-bash", [
+        "-c",
+        `frankenphp php-cli -m 2>/dev/null || php -m 2>/dev/null`,
+      ]);
+      const result = await cmd.execute();
+      if (result.code === 0) {
+        phpExtensions.value = result.stdout
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l && !l.startsWith("["));
+      }
+    } catch {
+      phpExtensions.value = [];
+    }
+  }
+
+  // Caddyfile validation
+  async function validateCaddyfile(): Promise<{ valid: boolean; error: string }> {
+    if (!selectedProject.value || !selectedCaddyfile.value) {
+      return { valid: false, error: "No file selected" };
+    }
+
+    // Write content to a temp file for validation
+    const tmpFile = `/tmp/phpup-validate-${Date.now()}.caddyfile`;
+    const writeCmd = Command.create("run-bash", [
+      "-c",
+      `printf '%s' ${shellEscape(caddyfileContent.value)} > ${shellEscape(tmpFile)}`,
+    ]);
+    await writeCmd.execute();
+
+    const cmd = Command.create("run-bash", [
+      "-c",
+      `frankenphp validate --config ${shellEscape(tmpFile)} 2>&1; rm -f ${shellEscape(tmpFile)}`,
+    ]);
+    const result = await cmd.execute();
+
+    if (result.code === 0) {
+      return { valid: true, error: "" };
+    }
+    return { valid: false, error: result.stdout + result.stderr };
+  }
+
   // Initialize
   async function initialize() {
     phpupCommand.value = await detectPhpup();
@@ -644,6 +845,8 @@ OPEN_BROWSER="${settings.value.openBrowser ? 1 : 0}"
     selectedCaddyfile,
     settings,
     phpupReady,
+    notifications,
+    phpExtensions,
 
     // Computed
     filteredProjects,
@@ -658,18 +861,25 @@ OPEN_BROWSER="${settings.value.openBrowser ? 1 : 0}"
     selectProject,
     initProject,
     saveSettings,
+    validateSettings,
     loadCaddyfile,
     loadSelectedCaddyfile,
     saveCaddyfile,
+    validateCaddyfile,
     startProject,
     stopProject,
     openInBrowser,
+    openInIde,
+    detectIde,
     openFolder,
     addGroup,
     renameGroup,
     deleteGroup,
     toggleGroup,
     saveData,
+    addNotification,
+    dismissNotification,
+    loadPhpExtensions,
   };
 }
 

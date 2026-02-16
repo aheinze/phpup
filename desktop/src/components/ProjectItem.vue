@@ -40,7 +40,9 @@ function handleFaviconError() {
     @dragleave="emit('dragleave')"
     @drop="emit('drop', $event, project)"
   >
-    <span v-if="project.isRunning" class="running-indicator"></span>
+    <span v-if="project.status === 'running'" class="status-indicator running"></span>
+    <span v-else-if="project.status === 'starting'" class="status-indicator starting"></span>
+    <span v-else-if="project.status === 'crashed'" class="status-indicator crashed"></span>
     <img
       v-if="project.favicon"
       :src="convertFileSrc(project.favicon)"
@@ -90,13 +92,30 @@ function handleFaviconError() {
   background: var(--bg-active);
 }
 
-.running-indicator {
+.status-indicator {
   width: 6px;
   height: 6px;
-  background: var(--success);
   border-radius: 50%;
   flex-shrink: 0;
   margin-right: -4px;
+}
+
+.status-indicator.running {
+  background: var(--success);
+}
+
+.status-indicator.starting {
+  background: #f59e0b;
+  animation: pulse-dot 1.5s infinite;
+}
+
+.status-indicator.crashed {
+  background: var(--danger);
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
 .project-favicon {

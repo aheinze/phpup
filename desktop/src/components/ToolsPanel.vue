@@ -134,6 +134,28 @@ const frankenphpPhpVersion = ref("");
 const installingFrankenphp = ref(false);
 const frankenphpOutput = ref<string[]>([]);
 
+// PHP Extensions
+const phpExtensions = ref<string[]>([]);
+const showExtensions = ref(false);
+
+async function loadPhpExtensions() {
+  try {
+    const cmd = Command.create("run-bash", [
+      "-c",
+      `frankenphp php-cli -m 2>/dev/null || php -m 2>/dev/null`,
+    ]);
+    const result = await cmd.execute();
+    if (result.code === 0) {
+      phpExtensions.value = result.stdout
+        .split("\n")
+        .map((l: string) => l.trim())
+        .filter((l: string) => l && !l.startsWith("["));
+    }
+  } catch {
+    phpExtensions.value = [];
+  }
+}
+
 // Composer state
 const composerInstalled = ref<boolean | null>(null);
 const composerVersion = ref("");
@@ -359,6 +381,9 @@ async function refreshAll() {
   await checkFrankenPhp();
   await checkComposer();
   await checkRunningProcesses();
+  if (frankenphpInstalled.value) {
+    await loadPhpExtensions();
+  }
 }
 
 onMounted(() => {
@@ -410,6 +435,19 @@ onUnmounted(() => {
       <div v-if="frankenphpInstalled" class="tool-details">
         <span v-if="frankenphpVersion" class="tool-version">{{ frankenphpVersion }}</span>
         <span v-if="frankenphpPhpVersion" class="tool-tag">PHP {{ frankenphpPhpVersion }}</span>
+      </div>
+
+      <!-- PHP Extensions -->
+      <div v-if="frankenphpInstalled && phpExtensions.length > 0" class="extensions-section">
+        <button class="extensions-toggle" @click="showExtensions = !showExtensions">
+          <svg class="chevron" :class="{ collapsed: !showExtensions }" width="10" height="10" viewBox="0 0 10 10">
+            <path d="M2 3l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          </svg>
+          <span>PHP Extensions ({{ phpExtensions.length }})</span>
+        </button>
+        <div v-if="showExtensions" class="extensions-list">
+          <span v-for="ext in phpExtensions" :key="ext" class="extension-tag">{{ ext }}</span>
+        </div>
       </div>
 
       <div class="tool-actions">
@@ -881,5 +919,53 @@ onUnmounted(() => {
 .btn-danger.btn-small {
   padding: 6px 12px;
   font-size: 13px;
+}
+
+/* Extensions */
+.extensions-section {
+  margin-top: 12px;
+}
+
+.extensions-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.extensions-toggle:hover {
+  color: var(--text);
+}
+
+.chevron {
+  transition: transform 0.2s;
+}
+
+.chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+.extensions-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.extension-tag {
+  font-size: 11px;
+  font-family: 'SF Mono', Monaco, monospace;
+  padding: 3px 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary);
 }
 </style>

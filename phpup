@@ -37,6 +37,7 @@ HTTPS_MODE="off"
 VERBOSE=0
 COMPRESSION=1
 OPEN_BROWSER=0
+XDEBUG=0
 ENV_FILE=""
 EXTRA_ARGS=()
 INIT_MODE=0
@@ -157,6 +158,7 @@ Advanced Features:
   --compression         Enable HTTP compression (default: on)
   --no-compression      Disable HTTP compression
   --open, -o            Open browser automatically after server starts
+  --no-open             Do not open browser (override config)
 
 Domain & Configuration:
   --domain DOMAIN       Custom local domain (e.g., myapp.test)
@@ -165,6 +167,7 @@ Domain & Configuration:
   --save                Save current settings to .phpup/config
 
 Development & Debug:
+  --xdebug              Enable Xdebug step debugger (port 9003)
   --verbose, -v         Verbose output and show FrankenPHP debug output
   --env-file FILE       Load environment variables from file
                         (also auto-loads .phpup/.env if it exists)
@@ -224,6 +227,23 @@ EOF
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
 
+# Cross-platform stat helpers (Linux uses -c, macOS uses -f)
+get_file_perms() {
+  local file="$1"
+  if stat -c %a "$file" 2>/dev/null; then
+    return
+  fi
+  stat -f %Lp "$file" 2>/dev/null || echo "unknown"
+}
+
+get_file_owner_uid() {
+  local file="$1"
+  if stat -c %u "$file" 2>/dev/null; then
+    return
+  fi
+  stat -f %u "$file" 2>/dev/null || echo "0"
+}
+
 # Production hardening checks
 security_checks() {
   local warnings=0
@@ -246,7 +266,7 @@ security_checks() {
 
   # Check for weak file permissions
   if [ -f ".phpup/.env" ]; then
-    env_perms=$(stat -c %a ".phpup/.env" 2>/dev/null || echo "unknown")
+    env_perms=$(get_file_perms ".phpup/.env")
     if [ "$env_perms" != "600" ] && [ "$env_perms" != "unknown" ]; then
       log "⚠️  Security Warning: .env file has permissive permissions ($env_perms), should be 600"
       warnings=$((warnings + 1))
@@ -327,6 +347,9 @@ load_config() {
       OPEN_BROWSER)
         [ "$OPEN_BROWSER" -eq 0 ] && OPEN_BROWSER="$value"
         ;;
+      XDEBUG)
+        [ "$XDEBUG" -eq 0 ] && XDEBUG="$value"
+        ;;
     esac
   done < "$CONFIG_FILE"
 }
@@ -350,6 +373,7 @@ COMPRESSION=$COMPRESSION
 PHP_THREADS=$PHP_THREADS
 DOCROOT=$DOCROOT
 OPEN_BROWSER=$OPEN_BROWSER
+XDEBUG=$XDEBUG
 EOF
 
   chmod 600 "$CONFIG_FILE"
@@ -366,8 +390,8 @@ infer_domain() {
 # Sanitize and validate domain name
 sanitize_domain() {
   local domain="$1"
-  # Remove any dangerous characters - only allow alphanumeric, dash, and dot
-  echo "$domain" | tr -cd 'a-z0-9.-' | tr '[:upper:]' '[:lower:]'
+  # Lowercase first, then remove any dangerous characters - only allow alphanumeric, dash, and dot
+  echo "$domain" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9.-'
 }
 
 # Validate domain name
@@ -445,16 +469,17 @@ generate_cert() {
 
   log "📜 Generating SSL certificate for $domain..."
 
-  cd .phpup/certs || return 1
-  mkcert "$domain" "*.${domain}" >/dev/null 2>&1
+  # Use subshell to avoid changing working directory of the main script
+  (
+    cd .phpup/certs || exit 1
+    mkcert "$domain" "*.${domain}" >/dev/null 2>&1
 
-  # mkcert creates files with specific names, rename them for consistency
-  if [ -f "${domain}+1.pem" ]; then
-    mv "${domain}+1.pem" "${domain}.pem"
-    mv "${domain}+1-key.pem" "${domain}-key.pem"
-  fi
-
-  cd ../.. || return 1
+    # mkcert creates files with specific names, rename them for consistency
+    if [ -f "${domain}+1.pem" ]; then
+      mv "${domain}+1.pem" "${domain}.pem"
+      mv "${domain}+1-key.pem" "${domain}-key.pem"
+    fi
+  )
 
   if [ -f ".phpup/certs/${domain}.pem" ]; then
     log "✅ SSL certificate generated for $domain"
@@ -482,8 +507,8 @@ manage_hosts_entry() {
   fi
 
   if [ "$action" = "add" ]; then
-    # Check if entry already exists
-    if grep -q "^$ip.*$domain" "$hosts_file" 2>/dev/null; then
+    # Check if entry already exists (use -F for literal string matching)
+    if grep -Fq "$ip $domain" "$hosts_file" 2>/dev/null; then
       debug "Domain $domain already in $hosts_file"
       return 0
     fi
@@ -501,13 +526,15 @@ manage_hosts_entry() {
     log "✅ Added $domain → $ip to hosts file"
 
   elif [ "$action" = "remove" ]; then
-    if grep -q "$domain.*$marker" "$hosts_file" 2>/dev/null; then
+    if grep -Fq "$domain $marker" "$hosts_file" 2>/dev/null; then
       log "🗑️  Removing $domain from $hosts_file"
 
+      # Escape dots in domain for safe use in sed regex
+      local escaped_domain="${domain//./\\.}"
       if [ -w "$hosts_file" ]; then
-        sed -i.backup "/$domain.*$marker/d" "$hosts_file"
+        sed -i.backup "/${escaped_domain}.*${marker}/d" "$hosts_file"
       else
-        sudo sed -i.backup "/$domain.*$marker/d" "$hosts_file"
+        sudo sed -i.backup "/${escaped_domain}.*${marker}/d" "$hosts_file"
       fi
 
       log "✅ Removed $domain from hosts file"
@@ -706,6 +733,10 @@ while [ $# -gt 0 ]; do
       COMPRESSION=0; shift;;
     --open|-o)
       OPEN_BROWSER=1; shift;;
+    --no-open)
+      OPEN_BROWSER=0; shift;;
+    --xdebug)
+      XDEBUG=1; shift;;
     --verbose|-v)
       VERBOSE=1; shift;;
     --env-file)
@@ -786,61 +817,121 @@ get_listeners_for_pid() {
   fi
 }
 
+# Cross-platform: get process command line
+get_process_cmdline() {
+  local pid="$1"
+  if [ -f "/proc/$pid/cmdline" ]; then
+    tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || echo ""
+  else
+    ps -p "$pid" -o args= 2>/dev/null || echo ""
+  fi
+}
+
+# Cross-platform: get process working directory
+get_process_cwd() {
+  local pid="$1"
+  if [ -L "/proc/$pid/cwd" ]; then
+    readlink "/proc/$pid/cwd" 2>/dev/null || echo "-"
+  elif command_exists lsof; then
+    lsof -p "$pid" -Fn 2>/dev/null | awk -F'n' '/^n\// && /cwd/ {print $2; exit}' || echo "-"
+  else
+    echo "-"
+  fi
+}
+
+# Cross-platform: check if PID is owned by current user
+is_own_process() {
+  local pid="$1"
+  if [ -d "/proc/$pid" ]; then
+    [ "$(get_file_owner_uid "/proc/$pid")" = "$(id -u)" ]
+  else
+    # macOS / BSD fallback: check via ps
+    local owner_uid
+    owner_uid=$(ps -p "$pid" -o uid= 2>/dev/null | tr -d ' ')
+    [ "$owner_uid" = "$(id -u)" ]
+  fi
+}
+
 # Helper to get process statistics
 get_process_stats() {
   local pid="$1"
-  local stats_file="/proc/$pid/stat"
-  local status_file="/proc/$pid/status"
 
-  if [ ! -f "$stats_file" ] || [ ! -f "$status_file" ]; then
-    echo "- - - - -"
-    return
-  fi
+  # Try Linux /proc first
+  if [ -f "/proc/$pid/stat" ] && [ -f "/proc/$pid/status" ]; then
+    local stats_file="/proc/$pid/stat"
+    local status_file="/proc/$pid/status"
 
-  # Get process start time and calculate uptime
-  local starttime=$(awk '{print $22}' "$stats_file" 2>/dev/null)
-  local boot_time=$(awk '/^btime/ {print $2}' /proc/stat 2>/dev/null)
-  local uptime_seconds=0
+    # Get process start time and calculate uptime
+    local starttime=$(awk '{print $22}' "$stats_file" 2>/dev/null)
+    local boot_time=$(awk '/^btime/ {print $2}' /proc/stat 2>/dev/null)
+    local uptime_seconds=0
 
-  if [ -n "$starttime" ] && [ -n "$boot_time" ]; then
-    local clock_ticks=$(getconf CLK_TCK 2>/dev/null || echo 100)
-    local process_start_time=$((boot_time + starttime / clock_ticks))
-    local current_time=$(date +%s)
-    uptime_seconds=$((current_time - process_start_time))
-  fi
+    if [ -n "$starttime" ] && [ -n "$boot_time" ]; then
+      local clock_ticks=$(getconf CLK_TCK 2>/dev/null || echo 100)
+      local process_start_time=$((boot_time + starttime / clock_ticks))
+      local current_time=$(date +%s)
+      uptime_seconds=$((current_time - process_start_time))
+    fi
 
-  # Format uptime
-  local uptime_formatted
-  if [ "$uptime_seconds" -lt 60 ]; then
-    uptime_formatted="${uptime_seconds}s"
-  elif [ "$uptime_seconds" -lt 3600 ]; then
-    uptime_formatted="$((uptime_seconds / 60))m"
+    # Format uptime
+    local uptime_formatted
+    if [ "$uptime_seconds" -lt 60 ]; then
+      uptime_formatted="${uptime_seconds}s"
+    elif [ "$uptime_seconds" -lt 3600 ]; then
+      uptime_formatted="$((uptime_seconds / 60))m"
+    else
+      uptime_formatted="$((uptime_seconds / 3600))h"
+    fi
+
+    # Get memory usage (RSS in kB)
+    local memory_kb=$(awk '/^VmRSS:/ {print $2}' "$status_file" 2>/dev/null || echo "0")
+    local memory_mb=$((memory_kb / 1024))
+    local memory_formatted
+    if [ "$memory_mb" -ge 1024 ]; then
+      memory_formatted="$((memory_mb / 1024))GB"
+    else
+      memory_formatted="${memory_mb}MB"
+    fi
+
+    # Get open file descriptor count
+    local fd_count
+    if [ -d "/proc/$pid/fd" ]; then
+      fd_count=$(ls /proc/$pid/fd 2>/dev/null | wc -l)
+    else
+      fd_count="-"
+    fi
+
+    # Get thread count
+    local threads=$(awk '/^Threads:/ {print $2}' "$status_file" 2>/dev/null || echo "-")
+
+    echo "$uptime_formatted $memory_formatted $fd_count $threads"
   else
-    uptime_formatted="$((uptime_seconds / 3600))h"
+    # macOS / BSD fallback using ps
+    local ps_output
+    ps_output=$(ps -p "$pid" -o etime=,rss= 2>/dev/null)
+    if [ -z "$ps_output" ]; then
+      echo "- - - -"
+      return
+    fi
+
+    local etime rss_kb
+    etime=$(echo "$ps_output" | awk '{print $1}')
+    rss_kb=$(echo "$ps_output" | awk '{print $2}')
+
+    # Format elapsed time (ps gives [[dd-]hh:]mm:ss)
+    local uptime_formatted="$etime"
+
+    # Format memory
+    local memory_mb=$(( (rss_kb + 512) / 1024 ))
+    local memory_formatted
+    if [ "$memory_mb" -ge 1024 ]; then
+      memory_formatted="$((memory_mb / 1024))GB"
+    else
+      memory_formatted="${memory_mb}MB"
+    fi
+
+    echo "$uptime_formatted $memory_formatted - -"
   fi
-
-  # Get memory usage (RSS in kB)
-  local memory_kb=$(awk '/^VmRSS:/ {print $2}' "$status_file" 2>/dev/null || echo "0")
-  local memory_mb=$((memory_kb / 1024))
-  local memory_formatted
-  if [ "$memory_mb" -ge 1024 ]; then
-    memory_formatted="$((memory_mb / 1024))GB"
-  else
-    memory_formatted="${memory_mb}MB"
-  fi
-
-  # Get open file descriptor count
-  local fd_count
-  if [ -d "/proc/$pid/fd" ]; then
-    fd_count=$(ls /proc/$pid/fd 2>/dev/null | wc -l)
-  else
-    fd_count="-"
-  fi
-
-  # Get thread count
-  local threads=$(awk '/^Threads:/ {print $2}' "$status_file" 2>/dev/null || echo "-")
-
-  echo "$uptime_formatted $memory_formatted $fd_count $threads"
 }
 
 # Helper: list running FrankenPHP instances owned by current user
@@ -861,19 +952,16 @@ list_instances() {
 
   local pid cmdline config listeners mode docroot workdir
   for pid in $PIDS; do
-    # Validate ownership and existence
-    if [ ! -d "/proc/$pid" ] || [ "$(stat -c %u "/proc/$pid" 2>/dev/null || echo 0)" != "$(id -u)" ]; then
+    # Validate ownership
+    if ! is_own_process "$pid"; then
       continue
     fi
 
-    cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || echo "")
-
-    # Get working directory where process was started
-    workdir=$(readlink "/proc/$pid/cwd" 2>/dev/null || echo "-")
+    cmdline=$(get_process_cmdline "$pid")
+    workdir=$(get_process_cwd "$pid")
 
     # Shorten path for display if too long
     if [ "${#workdir}" -gt 35 ] && [ "$workdir" != "-" ]; then
-      # Show last part of path with ...
       workdir="...${workdir: -32}"
     fi
 
@@ -921,15 +1009,13 @@ stats_instances() {
 
   local pid cmdline config listeners mode workdir stats_info
   for pid in $PIDS; do
-    # Validate ownership and existence
-    if [ ! -d "/proc/$pid" ] || [ "$(stat -c %u "/proc/$pid" 2>/dev/null || echo 0)" != "$(id -u)" ]; then
+    # Validate ownership
+    if ! is_own_process "$pid"; then
       continue
     fi
 
-    cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || echo "")
-
-    # Get working directory
-    workdir=$(readlink "/proc/$pid/cwd" 2>/dev/null || echo "-")
+    cmdline=$(get_process_cmdline "$pid")
+    workdir=$(get_process_cwd "$pid")
     if [ "${#workdir}" -gt 25 ] && [ "$workdir" != "-" ]; then
       workdir="...${workdir: -22}"
     fi
@@ -962,7 +1048,6 @@ stats_instances() {
   done
 }
 
-# Handle init mode
 # Handle stop mode - kill all FrankenPHP processes
 if [ "$STOP_MODE" -eq 1 ]; then
   log "🛑 Stopping all FrankenPHP processes..."
@@ -979,7 +1064,7 @@ if [ "$STOP_MODE" -eq 1 ]; then
   # Validate PIDs and check ownership before killing
   VALID_PIDS=""
   for pid in $PIDS; do
-    if [ -d "/proc/$pid" ] && [ "$(stat -c %u "/proc/$pid" 2>/dev/null || echo 0)" = "$(id -u)" ]; then
+    if is_own_process "$pid"; then
       VALID_PIDS="${VALID_PIDS} $pid"
     fi
   done
@@ -1389,8 +1474,8 @@ if [ "$INIT_MODE" -eq 1 ]; then
     log "   (--force enabled: existing files will be overwritten)"
   fi
 
-  # Create directory
-  mkdir -p .phpup
+  # Create directories
+  mkdir -p .phpup .phpup/sessions
 
   # Detect docroot for configuration
   if [ -z "$DOCROOT" ]; then
@@ -1442,6 +1527,7 @@ post_max_size = 50M
 max_file_uploads = 20
 
 ; Sessions (secure defaults)
+session.save_path = .phpup/sessions
 session.gc_maxlifetime = 1440
 session.cookie_httponly = On
 session.use_strict_mode = On
@@ -1557,6 +1643,7 @@ EOF
       post_max_size 50M
       max_file_uploads 20
       upload_tmp_dir /tmp
+      session.save_path {\$PHPUP_DIR}/sessions
       display_errors On
       error_reporting E_ALL
       log_errors On
@@ -1641,6 +1728,7 @@ EOF
       post_max_size 50M
       max_file_uploads 20
       upload_tmp_dir /tmp
+      session.save_path {\$PHPUP_DIR}/sessions
       display_errors On
       error_reporting E_ALL
       log_errors On
@@ -1913,7 +2001,7 @@ fi
 # Discover a free port starting from the requested value
 AVAILABLE_PORT=$(find_free_port "$HOST" "$START_PORT") || {
   err "❌ Did not find any free port starting at $START_PORT"
-  log "Tried $((2000 + 1)) consecutive ports without success."
+  log "Tried 2001 consecutive ports without success."
   log "You can pick an explicit port with --port or stop other listeners."
   exit 1
 }
@@ -1972,7 +2060,7 @@ if [ -n "$CADDYFILE" ]; then
   fi
 else
   # No custom Caddyfile: generate an optimized one in .phpup/Caddyfile
-  mkdir -p .phpup
+  mkdir -p .phpup .phpup/sessions
 
   # Determine if we're in worker mode (explicit or due to watch mode)
   EFFECTIVE_WORKER_MODE=$WORKER_MODE
@@ -2020,10 +2108,17 @@ else
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      upload_max_filesize 50M"
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      post_max_size 50M"
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      max_file_uploads 20"
+    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      session.save_path {\$PHPUP_DIR}/sessions"
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      display_errors On"
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      error_reporting E_ALL"
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      log_errors On"
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      error_log {\$PHPUP_DIR}/php_errors.log"
+    if [ "$XDEBUG" -eq 1 ]; then
+      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      xdebug.mode debug"
+      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      xdebug.start_with_request yes"
+      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      xdebug.client_host 127.0.0.1"
+      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      xdebug.client_port 9003"
+    fi
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    }"
 
     # Thread configuration for workers
@@ -2167,10 +2262,17 @@ else
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      upload_max_filesize 50M"
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      post_max_size 50M"
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      max_file_uploads 20"
+    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      session.save_path {\$PHPUP_DIR}/sessions"
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      display_errors On"
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      error_reporting E_ALL"
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      log_errors On"
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      error_log {\$PHPUP_DIR}/php_errors.log"
+    if [ "$XDEBUG" -eq 1 ]; then
+      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      xdebug.mode debug"
+      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      xdebug.start_with_request yes"
+      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      xdebug.client_host 127.0.0.1"
+      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      xdebug.client_port 9003"
+    fi
     GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    }"
 
     # Thread configuration for classic mode
@@ -2516,7 +2618,7 @@ if command_exists curl; then
   if [ "$HEALTH_OK" -eq 1 ]; then
     debug "✅ Server health check passed"
   else
-    warn "⚠️  Server health check failed after ${HEALTH_RETRIES} attempts - server might not be ready"
+    log "⚠️  Server health check failed after ${HEALTH_RETRIES} attempts - server might not be ready"
   fi
 fi
 

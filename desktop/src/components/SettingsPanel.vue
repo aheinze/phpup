@@ -57,6 +57,15 @@ function updateSetting<K extends keyof ProjectSettings>(key: K, value: ProjectSe
           placeholder="./public"
         >
       </div>
+      <div class="setting-row">
+        <label>PHP Threads</label>
+        <input
+          type="text"
+          :value="settings.phpThreads"
+          @input="updateSetting('phpThreads', ($event.target as HTMLInputElement).value)"
+          placeholder="auto"
+        >
+      </div>
     </div>
 
     <div class="section-header">
@@ -114,6 +123,15 @@ function updateSetting<K extends keyof ProjectSettings>(key: K, value: ProjectSe
           type="checkbox"
           :checked="settings.openBrowser"
           @change="updateSetting('openBrowser', ($event.target as HTMLInputElement).checked)"
+        >
+        <span class="toggle"></span>
+      </label>
+      <label class="toggle-row">
+        <span>Xdebug</span>
+        <input
+          type="checkbox"
+          :checked="settings.xdebug"
+          @change="updateSetting('xdebug', ($event.target as HTMLInputElement).checked)"
         >
         <span class="toggle"></span>
       </label>

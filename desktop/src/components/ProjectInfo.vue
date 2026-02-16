@@ -8,13 +8,29 @@ const props = defineProps<{
   project: Project;
   host: string;
   output: string[];
+  detectedIde: string | null;
 }>();
 
 const emit = defineEmits<{
   openBrowser: [];
   clearOutput: [];
   openTools: [];
+  openIde: [];
 }>();
+
+const statusLabels: Record<string, string> = {
+  stopped: "Stopped",
+  starting: "Starting...",
+  running: "Running",
+  crashed: "Crashed",
+};
+
+const statusClasses: Record<string, string> = {
+  stopped: "",
+  starting: "starting",
+  running: "running",
+  crashed: "crashed",
+};
 
 interface HealthCheck {
   name: string;
@@ -176,8 +192,8 @@ watch(() => props.project.path, () => {
       <div class="info-row">
         <span class="info-label">Status</span>
         <span class="info-value">
-          <span class="status-badge" :class="{ running: project.isRunning }">
-            {{ project.isRunning ? 'Running' : 'Stopped' }}
+          <span class="status-badge" :class="statusClasses[project.status || 'stopped']">
+            {{ statusLabels[project.status || 'stopped'] }}
           </span>
         </span>
       </div>
@@ -199,6 +215,17 @@ watch(() => props.project.path, () => {
           >http://{{ host }}:{{ project.port }}</a>
         </span>
       </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div v-if="detectedIde" class="quick-actions">
+      <button class="btn-outline btn-small" @click="emit('openIde')">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M10 1l3 3-8 8H2v-3l8-8z"/>
+          <path d="M8 3l3 3"/>
+        </svg>
+        Open in {{ detectedIde }}
+      </button>
     </div>
 
     <!-- Health Checks -->
@@ -336,6 +363,28 @@ watch(() => props.project.path, () => {
 .status-badge.running {
   background: #dcfce7;
   color: #166534;
+}
+
+.status-badge.starting {
+  background: #fef3c7;
+  color: #92400e;
+  animation: pulse-badge 1.5s infinite;
+}
+
+.status-badge.crashed {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+@keyframes pulse-badge {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.quick-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
 }
 
 .health-checks {
