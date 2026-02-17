@@ -582,7 +582,7 @@ onUnmounted(() => {
 <style scoped>
 .content-section {
   flex: 1;
-  padding: 16px;
+  padding: 18px;
   overflow-y: auto;
 }
 
@@ -594,7 +594,7 @@ onUnmounted(() => {
 }
 
 .section-header h2 {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -603,10 +603,10 @@ onUnmounted(() => {
 
 .tool-card {
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 14px;
+  border-radius: var(--radius-sm);
+  padding: 16px;
   margin-bottom: 12px;
-  background: var(--bg-secondary);
+  background: var(--surface-subtle);
 }
 
 .tool-header {
@@ -620,6 +620,7 @@ onUnmounted(() => {
   font-size: 14px;
   font-weight: 600;
   margin-bottom: 3px;
+  letter-spacing: -0.01em;
 }
 
 .tool-description {
@@ -640,7 +641,7 @@ onUnmounted(() => {
 .status-installed {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   font-size: 12px;
   color: var(--success);
 }
@@ -654,16 +655,16 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 8px;
+  margin-top: 10px;
 }
 
 .tool-version {
   font-size: 11px;
-  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+  font-family: 'SF Mono', 'JetBrains Mono', Monaco, monospace;
   color: var(--text-secondary);
-  background: var(--bg);
+  background: var(--bg-inset);
   padding: 3px 8px;
-  border-radius: 4px;
+  border-radius: 20px;
 }
 
 .tool-tag {
@@ -672,37 +673,38 @@ onUnmounted(() => {
   color: var(--accent);
   background: var(--accent-light);
   padding: 3px 8px;
-  border-radius: 4px;
+  border-radius: 20px;
 }
 
 .tool-actions {
   display: flex;
   gap: 6px;
-  margin-top: 12px;
+  margin-top: 14px;
 }
 
 .btn-primary {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 14px;
+  padding: 6px 14px;
   background: var(--accent);
-  color: #fff;
+  color: var(--text-on-accent);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   font-size: 12px;
   font-family: inherit;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.1s;
+  transition: all 0.15s ease;
 }
 
 .btn-primary:hover {
-  background: #6d9df8;
+  background: var(--accent-hover);
+  box-shadow: var(--accent-glow);
 }
 
 .btn-primary:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: not-allowed;
 }
 
@@ -710,31 +712,31 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 12px;
-  background: var(--bg);
+  padding: 6px 12px;
+  background: var(--btn-outline-bg);
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  border: 1px solid var(--btn-outline-border);
+  border-radius: var(--radius-xs);
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
-  transition: all 0.1s;
+  transition: all 0.15s ease;
   text-decoration: none;
 }
 
 .btn-outline:hover {
-  background: var(--bg-hover);
+  background: var(--btn-outline-hover-bg);
 }
 
 .btn-small {
-  padding: 4px 10px;
+  padding: 5px 10px;
   font-size: 12px;
 }
 
 .install-output {
   margin-top: 12px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
@@ -742,8 +744,8 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 10px;
-  background: var(--bg-active);
+  padding: 8px 12px;
+  background: var(--surface-tint);
   border-bottom: 1px solid var(--border);
   font-size: 11px;
   color: var(--text-muted);
@@ -758,6 +760,8 @@ onUnmounted(() => {
   font-size: 11px;
   cursor: pointer;
   text-transform: uppercase;
+  font-family: inherit;
+  transition: color 0.1s;
 }
 
 .clear-btn:hover {
@@ -765,14 +769,14 @@ onUnmounted(() => {
 }
 
 .output-content {
-  padding: 10px 12px;
-  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+  padding: 12px 14px;
+  font-family: 'SF Mono', 'JetBrains Mono', Monaco, monospace;
   font-size: 11px;
   line-height: 1.7;
   max-height: 200px;
   overflow-y: auto;
-  background: #1a1b1e;
-  color: #a8b1c2;
+  background: var(--bg-inset-deep);
+  color: var(--console-text);
 }
 
 .output-content div {
@@ -784,9 +788,9 @@ onUnmounted(() => {
 .monitor-section {
   margin-top: 16px;
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 12px;
-  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  background: var(--surface-subtle);
 }
 
 .monitor-section .section-header {
@@ -794,7 +798,7 @@ onUnmounted(() => {
 }
 
 .monitor-section .section-header h3 {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -811,8 +815,8 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 20px;
+  gap: 8px;
+  padding: 24px;
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -831,15 +835,15 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
-  background: var(--bg);
+  padding: 10px 12px;
+  background: var(--process-item-bg);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  transition: background 0.1s;
+  border-radius: var(--radius-xs);
+  transition: all 0.15s ease;
 }
 
 .process-item:hover {
-  background: var(--bg-hover);
+  background: var(--surface-tint);
 }
 
 .process-indicator {
@@ -848,7 +852,7 @@ onUnmounted(() => {
   background: var(--success);
   border-radius: 50%;
   flex-shrink: 0;
-  box-shadow: 0 0 6px var(--success);
+  box-shadow: 0 0 8px rgba(48, 209, 88, 0.5);
   animation: pulse 2s infinite;
 }
 
@@ -881,16 +885,16 @@ onUnmounted(() => {
 .process-pid {
   font-size: 10px;
   color: var(--text-muted);
-  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
-  background: var(--bg-active);
+  font-family: 'SF Mono', 'JetBrains Mono', Monaco, monospace;
+  background: var(--btn-outline-bg);
   padding: 1px 6px;
-  border-radius: 3px;
+  border-radius: 20px;
 }
 
 .process-path {
   font-size: 11px;
   color: var(--text-muted);
-  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+  font-family: 'SF Mono', 'JetBrains Mono', Monaco, monospace;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -901,14 +905,14 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   color: var(--text-muted);
   cursor: pointer;
-  transition: all 0.1s;
+  transition: all 0.15s ease;
   flex-shrink: 0;
 }
 
@@ -921,24 +925,25 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 12px;
+  padding: 6px 12px;
   background: var(--danger);
-  color: white;
+  color: var(--text-on-accent);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   font-size: 12px;
   font-family: inherit;
   font-weight: 500;
   cursor: pointer;
-  transition: opacity 0.1s;
+  transition: all 0.15s ease;
 }
 
 .btn-danger:hover {
-  opacity: 0.85;
+  background: var(--danger-hover);
+  box-shadow: var(--danger-glow);
 }
 
 .btn-danger.btn-small {
-  padding: 4px 10px;
+  padding: 5px 10px;
   font-size: 12px;
 }
 
@@ -958,6 +963,7 @@ onUnmounted(() => {
   color: var(--text-secondary);
   cursor: pointer;
   padding: 3px 0;
+  transition: color 0.1s;
 }
 
 .extensions-toggle:hover {
@@ -965,7 +971,7 @@ onUnmounted(() => {
 }
 
 .chevron {
-  transition: transform 0.2s;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .chevron.collapsed {
@@ -983,11 +989,11 @@ onUnmounted(() => {
 
 .extension-tag {
   font-size: 10px;
-  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
-  padding: 2px 7px;
-  background: var(--bg);
+  font-family: 'SF Mono', 'JetBrains Mono', Monaco, monospace;
+  padding: 3px 8px;
+  background: var(--bg-inset);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 20px;
   color: var(--text-secondary);
 }
 </style>

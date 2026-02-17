@@ -3,6 +3,7 @@ import type { ProjectSettings } from "../types";
 
 const props = defineProps<{
   settings: ProjectSettings;
+  xdebugAvailable: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -126,7 +127,7 @@ function updateSetting<K extends keyof ProjectSettings>(key: K, value: ProjectSe
         >
         <span class="toggle"></span>
       </label>
-      <label class="toggle-row">
+      <label v-if="xdebugAvailable" class="toggle-row">
         <span>Xdebug</span>
         <input
           type="checkbox"
@@ -142,7 +143,7 @@ function updateSetting<K extends keyof ProjectSettings>(key: K, value: ProjectSe
 <style scoped>
 .content-section {
   flex: 1;
-  padding: 16px;
+  padding: 18px;
   overflow-y: auto;
 }
 
@@ -151,7 +152,7 @@ function updateSetting<K extends keyof ProjectSettings>(key: K, value: ProjectSe
 }
 
 .section-header h2 {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -171,7 +172,7 @@ function updateSetting<K extends keyof ProjectSettings>(key: K, value: ProjectSe
 .setting-row {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
 }
 
 .setting-row label {
@@ -180,35 +181,37 @@ function updateSetting<K extends keyof ProjectSettings>(key: K, value: ProjectSe
 }
 
 .setting-row input {
-  padding: 6px 10px;
+  padding: 7px 12px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   font-size: 13px;
   font-family: inherit;
-  background: var(--bg);
+  background: var(--bg-inset);
   color: var(--text);
   outline: none;
+  transition: all 0.15s ease;
 }
 
 .setting-row input:focus {
   border-color: var(--accent);
+  box-shadow: var(--focus-ring);
 }
 
 .options-list {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
-  background: var(--bg-secondary);
+  background: var(--surface-subtle);
 }
 
 .option-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--border);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-light);
   font-size: 13px;
 }
 
@@ -218,39 +221,51 @@ function updateSetting<K extends keyof ProjectSettings>(key: K, value: ProjectSe
 
 .segmented {
   display: flex;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  overflow: hidden;
+  background: var(--bg-inset);
+  border-radius: var(--radius-xs);
+  padding: 2px;
+  gap: 2px;
 }
 
 .segmented button {
-  padding: 4px 10px;
-  background: var(--bg);
+  padding: 4px 12px;
+  background: transparent;
   border: none;
+  border-radius: 5px;
   font-size: 12px;
   font-family: inherit;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.1s;
+  transition: all 0.15s ease;
 }
 
 .segmented button:not(:last-child) {
-  border-right: 1px solid var(--border);
+  border-right: none;
 }
 
 .segmented button.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--text-on-accent);
+  box-shadow: var(--accent-glow);
+}
+
+.segmented button:not(.active):hover {
+  background: var(--btn-outline-bg);
 }
 
 .toggle-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--border);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-light);
   cursor: pointer;
   font-size: 13px;
+  transition: background 0.1s;
+}
+
+.toggle-row:hover {
+  background: var(--surface-subtle);
 }
 
 .toggle-row:last-child {
@@ -262,12 +277,12 @@ function updateSetting<K extends keyof ProjectSettings>(key: K, value: ProjectSe
 }
 
 .toggle {
-  width: 36px;
-  height: 20px;
-  background: var(--bg-active);
-  border-radius: 10px;
+  width: 38px;
+  height: 22px;
+  background: var(--toggle-bg);
+  border-radius: 11px;
   position: relative;
-  transition: background 0.15s;
+  transition: background 0.2s ease;
 }
 
 .toggle::after {
@@ -275,11 +290,12 @@ function updateSetting<K extends keyof ProjectSettings>(key: K, value: ProjectSe
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 16px;
-  height: 16px;
-  background: var(--text-muted);
+  width: 18px;
+  height: 18px;
+  background: var(--toggle-knob);
   border-radius: 50%;
-  transition: all 0.15s;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 .toggle-row input:checked + .toggle {
@@ -288,6 +304,6 @@ function updateSetting<K extends keyof ProjectSettings>(key: K, value: ProjectSe
 
 .toggle-row input:checked + .toggle::after {
   transform: translateX(16px);
-  background: #fff;
+  background: var(--toggle-knob-active);
 }
 </style>

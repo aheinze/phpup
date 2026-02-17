@@ -43,15 +43,15 @@ const emit = defineEmits<{
 
 <style scoped>
 .action-bar {
-  height: 44px;
+  height: 48px;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 16px;
-  background: var(--bg-secondary);
+  padding: 0 18px;
+  background: var(--surface-tint);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
-  border-radius: 0 0 8px 8px;
+  border-radius: 0 0 var(--radius) var(--radius);
 }
 
 .action-spacer {
@@ -59,35 +59,36 @@ const emit = defineEmits<{
 }
 
 .btn-primary {
-  padding: 6px 14px;
+  padding: 10px 28px;
   background: var(--accent);
-  color: #fff;
+  color: var(--text-on-accent);
   border: none;
-  border-radius: 4px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
   font-family: inherit;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.1s;
+  transition: all 0.15s ease;
 }
 
 .btn-primary:hover {
-  background: #6d9df8;
+  background: var(--accent-hover);
+  box-shadow: var(--accent-glow);
 }
 
 .btn-outline {
-  padding: 6px 14px;
-  background: var(--bg-elevated);
+  padding: 10px 28px;
+  background: var(--btn-outline-bg);
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-size: 13px;
+  border: 1px solid var(--btn-outline-border);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
   font-family: inherit;
   cursor: pointer;
-  transition: all 0.1s;
+  transition: all 0.15s ease;
 }
 
 .btn-outline:hover {
-  background: var(--bg-hover);
+  background: var(--btn-outline-hover-bg);
 }
 </style>

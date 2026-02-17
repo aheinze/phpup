@@ -301,9 +301,13 @@ function handleRenameGroup(group: Group, newName: string) {
   max-width: 400px;
   display: flex;
   flex-direction: column;
-  background: var(--bg-secondary);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
   flex-shrink: 0;
-  border-radius: 8px;
+  border-radius: var(--radius);
+  box-shadow: var(--glass-shadow);
 }
 
 .resize-handle {
@@ -312,7 +316,7 @@ function handleRenameGroup(group: Group, newName: string) {
   background: transparent;
   transition: background 0.15s;
   flex-shrink: 0;
-  margin: 8px 0;
+  margin: 12px 0;
   border-radius: 2px;
 }
 
@@ -322,7 +326,7 @@ function handleRenameGroup(group: Group, newName: string) {
 }
 
 .sidebar-header {
-  padding: 12px 12px 6px;
+  padding: 14px 14px 6px;
 }
 
 .sidebar-title {
@@ -330,11 +334,11 @@ function handleRenameGroup(group: Group, newName: string) {
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.8px;
+  letter-spacing: 0.5px;
 }
 
 .sidebar-search {
-  padding: 0 12px 6px;
+  padding: 0 10px 8px;
 }
 
 .search-wrapper {
@@ -352,19 +356,21 @@ function handleRenameGroup(group: Group, newName: string) {
 
 .search-input {
   width: 100%;
-  padding: 5px 8px 5px 28px;
+  padding: 6px 8px 6px 28px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   font-size: 12px;
   font-family: inherit;
-  background: var(--bg);
+  background: var(--bg-inset);
   color: var(--text);
   outline: none;
-  transition: border-color 0.1s;
+  transition: all 0.15s ease;
 }
 
 .search-input:focus {
   border-color: var(--accent);
+  background: var(--bg-inset-deep);
+  box-shadow: var(--focus-ring);
 }
 
 .project-list {
@@ -375,7 +381,7 @@ function handleRenameGroup(group: Group, newName: string) {
 
 .sidebar-footer {
   height: 44px;
-  padding: 0 12px;
+  padding: 0 10px;
   border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
@@ -397,11 +403,12 @@ function handleRenameGroup(group: Group, newName: string) {
   gap: 4px;
   padding: 5px 8px;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   font-size: 11px;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.8px;
+  letter-spacing: 0.5px;
+  transition: all 0.1s ease;
 }
 
 .group-header:hover {
@@ -414,7 +421,7 @@ function handleRenameGroup(group: Group, newName: string) {
 }
 
 .chevron {
-  transition: transform 0.15s;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   flex-shrink: 0;
 }
 
@@ -428,9 +435,9 @@ function handleRenameGroup(group: Group, newName: string) {
 
 .group-name-input {
   flex: 1;
-  background: var(--bg);
+  background: var(--bg-inset-deep);
   border: 1px solid var(--accent);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   padding: 1px 6px;
   font-size: 11px;
   font-family: inherit;
@@ -460,7 +467,7 @@ function handleRenameGroup(group: Group, newName: string) {
 
 .ungrouped.drag-over {
   background: var(--accent-light);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 
 .drop-hint {
@@ -468,8 +475,8 @@ function handleRenameGroup(group: Group, newName: string) {
   text-align: center;
   font-size: 11px;
   color: var(--text-muted);
-  border: 1px dashed var(--border);
-  border-radius: 4px;
+  border: 1px dashed var(--drop-hint-border);
+  border-radius: var(--radius-xs);
   margin: 2px 0;
 }
 
@@ -488,10 +495,10 @@ function handleRenameGroup(group: Group, newName: string) {
   height: 26px;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   color: var(--text-muted);
   cursor: pointer;
-  transition: all 0.1s;
+  transition: all 0.15s ease;
 }
 
 .icon-btn:hover {

@@ -59,7 +59,7 @@ async function copyToClipboard() {
 .console {
   margin-top: 16px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
@@ -67,8 +67,8 @@ async function copyToClipboard() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 12px;
-  background: var(--bg-secondary);
+  padding: 8px 14px;
+  background: var(--surface-tint);
   border-bottom: 1px solid var(--border);
   font-size: 11px;
   color: var(--text-muted);
@@ -83,16 +83,16 @@ async function copyToClipboard() {
 }
 
 .console-output {
-  padding: 10px 12px;
-  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+  padding: 12px 14px;
+  font-family: 'SF Mono', 'JetBrains Mono', Monaco, monospace;
   font-size: 11px;
   line-height: 1.7;
   max-height: 300px;
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  background: #1a1b1e;
-  color: #a8b1c2;
+  background: var(--bg-inset-deep);
+  color: var(--console-text);
   margin: 0;
 }
 
@@ -104,10 +104,10 @@ async function copyToClipboard() {
   height: 24px;
   background: transparent;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   color: var(--text-muted);
   cursor: pointer;
-  transition: all 0.1s;
+  transition: all 0.15s ease;
 }
 
 .icon-btn:hover {

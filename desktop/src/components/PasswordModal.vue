@@ -71,7 +71,9 @@ function handleCancel() {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--overlay-bg);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -79,10 +81,13 @@ function handleCancel() {
 }
 
 .modal {
-  background: var(--bg);
-  border-radius: 12px;
+  background: var(--modal-bg);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border: 1px solid var(--modal-border);
+  border-radius: var(--radius);
   width: 360px;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--modal-shadow);
   overflow: hidden;
 }
 
@@ -159,7 +164,7 @@ function handleCancel() {
 .btn-submit {
   padding: 8px 16px;
   background: var(--accent);
-  color: white;
+  color: var(--text-on-accent);
   border: none;
   border-radius: 6px;
   font-size: 14px;

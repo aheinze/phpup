@@ -26,11 +26,57 @@ function isValidPort(port: string): boolean {
   return !isNaN(num) && num > 0 && num <= 65535 && port === num.toString();
 }
 
+interface PhpupListedInstance {
+  pid: string;
+  port: string | null;
+  pathFragment: string | null;
+}
+
+function getPathSuffix(path: string, depth = 2): string {
+  return path.split("/").filter(Boolean).slice(-depth).join("/");
+}
+
+function projectPathMatchesFragment(projectPath: string, pathFragment: string): boolean {
+  const projectSuffix = getPathSuffix(projectPath);
+  const fragmentSuffix = getPathSuffix(pathFragment);
+  return (
+    projectPath.endsWith(pathFragment) ||
+    projectPath.includes(pathFragment) ||
+    pathFragment.endsWith(projectSuffix) ||
+    projectSuffix === fragmentSuffix
+  );
+}
+
+function parsePhpupListOutput(output: string): PhpupListedInstance[] {
+  const instances: PhpupListedInstance[] = [];
+  for (const line of output.split("\n")) {
+    const pidMatch = line.match(/^(\d+)\s+/);
+    if (!pidMatch) continue;
+
+    const pid = pidMatch[1];
+    const portMatch = line.match(/\*:(\d+)/);
+    const port = portMatch ? portMatch[1] : null;
+
+    let pathFragment: string | null = null;
+    const pathMatch = line.match(/\s+(\S*\/.+?)\s+\.phpup/);
+    if (pathMatch) {
+      pathFragment = pathMatch[1];
+      if (pathFragment.startsWith("...")) {
+        pathFragment = pathFragment.substring(3);
+      }
+    }
+
+    instances.push({ pid, port, pathFragment });
+  }
+  return instances;
+}
+
 // Global state
 const groups = ref<Group[]>([]);
 const projects = ref<Project[]>([]);
 const selectedProject = ref<Project | null>(null);
 const runningProcesses = ref<Map<string, RunningProcess>>(new Map());
+const runningPids = ref<Map<string, string>>(new Map()); // projectId -> pid
 const projectOutput = ref<string[]>([]);
 const searchQuery = ref("");
 
@@ -673,6 +719,100 @@ XDEBUG="${settings.value.xdebug ? 1 : 0}"
     projectOutput.value.push("Server starting...");
   }
 
+  async function killPid(pid: string): Promise<boolean> {
+    await Command.create("run-bash", [
+      "-c",
+      `kill -TERM ${pid} 2>/dev/null; sleep 1; kill -0 ${pid} 2>/dev/null && kill -KILL ${pid} 2>/dev/null || true`,
+    ]).execute();
+    const check = await Command.create("run-bash", [
+      "-c",
+      `kill -0 ${pid} 2>/dev/null; echo $?`,
+    ]).execute();
+    return check.stdout.trim() !== "0";
+  }
+
+  async function listPhpupInstances(): Promise<PhpupListedInstance[]> {
+    const command = Command.create("run-bash", [
+      "-c",
+      `${shellEscape(phpupCommand.value)} --list 2>&1`,
+    ]);
+    const result = await command.execute();
+    return parsePhpupListOutput(result.stdout + result.stderr);
+  }
+
+  async function getProjectNetworkHints(project: Project): Promise<{
+    hosts: string[];
+    protocols: Array<"http" | "https">;
+  }> {
+    const hosts = new Set<string>(["127.0.0.1", "localhost"]);
+    let httpsMode: string | null = null;
+
+    // Selected project may have unsaved UI settings - include them.
+    if (selectedProject.value?.id === project.id) {
+      if (settings.value.host) hosts.add(settings.value.host);
+      if (settings.value.domain) hosts.add(settings.value.domain);
+      httpsMode = settings.value.httpsMode;
+    }
+
+    try {
+      const configCmd = Command.create("run-bash", [
+        "-c",
+        `cat ${shellEscape(project.path + "/.phpup/config")} 2>/dev/null`,
+      ]);
+      const configResult = await configCmd.execute();
+      if (configResult.code === 0 && configResult.stdout.trim()) {
+        const config = configResult.stdout;
+        const hostMatch = config.match(/HOST=["']?([^"'\n]+)["']?/);
+        const domainMatch = config.match(/DOMAIN=["']?([^"'\n]+)["']?/);
+        const httpsMatch = config.match(/HTTPS_MODE=["']?([^"'\n]+)["']?/);
+        if (hostMatch?.[1]) hosts.add(hostMatch[1]);
+        if (domainMatch?.[1]) hosts.add(domainMatch[1]);
+        if (httpsMatch?.[1]) httpsMode = httpsMatch[1];
+      }
+    } catch {
+      // Best effort only; keep defaults.
+    }
+
+    if (httpsMode === "off") {
+      return { hosts: [...hosts], protocols: ["http"] };
+    }
+    if (httpsMode === "local" || httpsMode === "on") {
+      return { hosts: [...hosts], protocols: ["https", "http"] };
+    }
+    return { hosts: [...hosts], protocols: ["http", "https"] };
+  }
+
+  async function isProjectServingFrankenphp(project: Project): Promise<boolean> {
+    if (!isValidPort(project.port)) return false;
+
+    const { hosts, protocols } = await getProjectNetworkHints(project);
+    for (const protocol of protocols) {
+      for (const host of hosts) {
+        const url = `${protocol}://${host}:${project.port}/`;
+        try {
+          const result = await Command.create("run-bash", [
+            "-c",
+            `curl -skI --max-time 1 ${shellEscape(url)} 2>/dev/null`,
+          ]).execute();
+          if ((result.stdout + result.stderr).toLowerCase().includes("frankenphp")) {
+            return true;
+          }
+        } catch {
+          // Try next URL candidate.
+        }
+      }
+    }
+    return false;
+  }
+
+  async function isPortServingFrankenphp(project: Project): Promise<boolean> {
+    try {
+      return await isProjectServingFrankenphp(project);
+    } catch {
+      return false;
+    }
+  }
+
   async function stopProject(project: Project) {
     const proc = runningProcesses.value.get(project.id);
     if (proc) {
@@ -680,64 +820,121 @@ XDEBUG="${settings.value.xdebug ? 1 : 0}"
       runningProcesses.value.delete(project.id);
     }
 
-    // Validate port is numeric to prevent command injection
-    if (isValidPort(project.port)) {
-      const command = Command.create("run-bash", [
+    let killed = false;
+
+    // Try killing by tracked PID first (works even with cap_net_bind_service)
+    const pid = runningPids.value.get(project.id);
+    if (pid) {
+      killed = await killPid(pid);
+      runningPids.value.delete(project.id);
+    }
+
+    // Fallback: kill by port (works when process is dumpable)
+    if (!killed && isValidPort(project.port)) {
+      await Command.create("run-bash", [
         "-c",
         `fuser -k ${project.port}/tcp 2>/dev/null || lsof -ti:${project.port} | xargs -r kill 2>/dev/null || true`,
-      ]);
-      await command.execute();
+      ]).execute();
+      killed = !await isPortServingFrankenphp(project);
+    }
+
+    // Last resort: only try safe candidate PIDs for this project.
+    if (!killed) {
+      const instances = await listPhpupInstances();
+      const candidatePids = new Set<string>();
+
+      // Port match is authoritative when available.
+      if (isValidPort(project.port)) {
+        for (const instance of instances) {
+          if (instance.port === project.port) {
+            candidatePids.add(instance.pid);
+          }
+        }
+      }
+
+      // Path fallback only when unambiguous.
+      const pathMatches = instances.filter(
+        (instance) =>
+          instance.pathFragment && projectPathMatchesFragment(project.path, instance.pathFragment)
+      );
+      if (pathMatches.length === 1) {
+        candidatePids.add(pathMatches[0].pid);
+      }
+
+      for (const candidatePid of candidatePids) {
+        if (candidatePid === pid) continue;
+        const pidKilled = await killPid(candidatePid);
+        if (!pidKilled) continue;
+        if (!await isProjectServingFrankenphp(project)) {
+          killed = true;
+          break;
+        }
+      }
     }
 
     project.isRunning = false;
     project.status = "stopped";
-    projectOutput.value.push("[Server stopped]");
+    projectOutput.value.push(
+      killed ? "[Server stopped]" : "[Stop requested, verifying process state...]"
+    );
+
+    await refreshAllStatuses();
+    if (project.isRunning) {
+      projectOutput.value.push("[Server may still be running]");
+      addNotification(`${project.name} is still running`, "warning");
+    }
   }
 
   async function refreshAllStatuses() {
-    const command = Command.create("run-bash", [
-      "-c",
-      `${shellEscape(phpupCommand.value)} --list 2>&1`,
-    ]);
-    const result = await command.execute();
-    const output = result.stdout + result.stderr;
+    const instances = await listPhpupInstances();
 
-    const runningProjects: Array<{ pathFragment: string; port: string }> = [];
-    const lines = output.split("\n");
-    for (const line of lines) {
-      const serverPortMatch = line.match(/\*:(\d+)/);
-      if (serverPortMatch) {
-        const port = serverPortMatch[1];
-        const pathMatch = line.match(/\s+(\S*\/.+?)\s+\.phpup/);
-        if (pathMatch) {
-          let pathFragment = pathMatch[1];
-          if (pathFragment.startsWith("...")) {
-            pathFragment = pathFragment.substring(3);
+    const matchedProjectIds = new Set<string>();
+    const matchedInstanceIdxs = new Set<number>();
+
+    // First pass: match instances that have path info
+    for (const project of projects.value) {
+      for (let i = 0; i < instances.length; i++) {
+        if (matchedInstanceIdxs.has(i)) continue;
+        const { pathFragment, port } = instances[i];
+        if (!pathFragment) continue;
+
+        if (projectPathMatchesFragment(project.path, pathFragment)) {
+          matchedProjectIds.add(project.id);
+          matchedInstanceIdxs.add(i);
+          runningPids.value.set(project.id, instances[i].pid);
+          if (port) project.port = port;
+          break;
+        }
+      }
+    }
+
+    // Second pass: for unmatched instances, verify by probing each project URL.
+    const unmatchedInstances = instances.filter((_, i) => !matchedInstanceIdxs.has(i));
+    if (unmatchedInstances.length > 0) {
+      for (const project of projects.value) {
+        if (matchedProjectIds.has(project.id)) continue;
+        if (!isValidPort(project.port)) continue;
+
+        if (await isProjectServingFrankenphp(project)) {
+          matchedProjectIds.add(project.id);
+
+          // Prefer exact port-to-instance PID when unique.
+          const samePort = unmatchedInstances.filter(
+            (instance) => instance.port && instance.port === project.port
+          );
+          if (samePort.length === 1) {
+            runningPids.value.set(project.id, samePort[0].pid);
+          } else if (unmatchedInstances.length === 1) {
+            runningPids.value.set(project.id, unmatchedInstances[0].pid);
           }
-          runningProjects.push({ pathFragment, port });
         }
       }
     }
 
     for (const project of projects.value) {
-      let isRunning = false;
-      const projectParts = project.path.split("/").filter(Boolean);
-      const projectSuffix = projectParts.slice(-2).join("/");
-      for (const { pathFragment, port } of runningProjects) {
-        const fragmentParts = pathFragment.split("/").filter(Boolean);
-        const fragmentSuffix = fragmentParts.slice(-2).join("/");
-        if (
-          project.path.endsWith(pathFragment) ||
-          project.path.includes(pathFragment) ||
-          pathFragment.endsWith(projectSuffix) ||
-          projectSuffix === fragmentSuffix
-        ) {
-          isRunning = true;
-          project.port = port;
-          break;
-        }
-      }
+      const isRunning = matchedProjectIds.has(project.id);
       project.isRunning = isRunning;
+      if (!isRunning) runningPids.value.delete(project.id);
       // Only update status if not managed by a running process handler
       if (!runningProcesses.value.has(project.id)) {
         if (isRunning && project.status !== "running") {
@@ -872,12 +1069,17 @@ XDEBUG="${settings.value.xdebug ? 1 : 0}"
     return { valid: false, error: result.stdout + result.stderr };
   }
 
+  const xdebugAvailable = computed(() =>
+    phpExtensions.value.some((ext) => ext.toLowerCase() === "xdebug")
+  );
+
   // Initialize
   async function initialize() {
     phpupCommand.value = await detectPhpup();
     phpupReady.value = true;
     await loadProjects();
     await refreshAllStatuses();
+    loadPhpExtensions();
   }
 
   return {
@@ -904,6 +1106,7 @@ XDEBUG="${settings.value.xdebug ? 1 : 0}"
     filteredProjects,
     ungroupedProjects,
     projectsByGroup,
+    xdebugAvailable,
 
     // Methods
     initialize,

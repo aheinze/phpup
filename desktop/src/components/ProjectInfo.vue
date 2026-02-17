@@ -330,20 +330,21 @@ watch(() => props.project.path, () => {
 <style scoped>
 .content-section {
   flex: 1;
-  padding: 16px;
+  padding: 18px;
   overflow-y: auto;
 }
 
 .info-table {
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
+  background: var(--surface-subtle);
 }
 
 .info-row {
   display: flex;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-light);
   font-size: 13px;
 }
 
@@ -362,7 +363,7 @@ watch(() => props.project.path, () => {
 }
 
 .info-value.mono {
-  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+  font-family: 'SF Mono', 'JetBrains Mono', Monaco, monospace;
   font-size: 12px;
 }
 
@@ -370,9 +371,11 @@ watch(() => props.project.path, () => {
   color: var(--accent);
   text-decoration: none;
   cursor: pointer;
+  transition: color 0.1s;
 }
 
 .url-link:hover {
+  color: var(--accent-hover);
   text-decoration: underline;
 }
 
@@ -390,10 +393,10 @@ watch(() => props.project.path, () => {
   height: 22px;
   background: transparent;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   color: var(--text-muted);
   cursor: pointer;
-  transition: all 0.1s;
+  transition: all 0.15s ease;
   flex-shrink: 0;
 }
 
@@ -403,12 +406,13 @@ watch(() => props.project.path, () => {
 }
 
 .status-badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 20px;
   font-size: 11px;
   font-weight: 500;
-  background: var(--bg-hover);
+  background: var(--btn-outline-bg);
   color: var(--text-secondary);
 }
 
@@ -434,13 +438,13 @@ watch(() => props.project.path, () => {
 }
 
 .quick-actions {
-  margin-top: 10px;
+  margin-top: 12px;
   display: flex;
   gap: 8px;
 }
 
 .health-checks {
-  margin-top: 12px;
+  margin-top: 14px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -450,8 +454,8 @@ watch(() => props.project.path, () => {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 8px 10px;
-  border-radius: 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
 }
 
@@ -488,8 +492,9 @@ watch(() => props.project.path, () => {
 .composer-section {
   margin-top: 16px;
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 12px;
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  background: var(--surface-subtle);
 }
 
 .section-header {
@@ -500,7 +505,7 @@ watch(() => props.project.path, () => {
 }
 
 .section-header h3 {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -531,35 +536,35 @@ watch(() => props.project.path, () => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 12px;
-  background: var(--bg);
+  padding: 6px 12px;
+  background: var(--btn-outline-bg);
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  border: 1px solid var(--btn-outline-border);
+  border-radius: var(--radius-xs);
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
-  transition: all 0.1s;
+  transition: all 0.15s ease;
 }
 
 .btn-outline:hover {
-  background: var(--bg-hover);
+  background: var(--btn-outline-hover-bg);
 }
 
 .btn-outline:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: not-allowed;
 }
 
 .btn-small {
-  padding: 4px 10px;
+  padding: 5px 10px;
   font-size: 12px;
 }
 
 .composer-output {
   margin-top: 10px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
@@ -567,8 +572,8 @@ watch(() => props.project.path, () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 10px;
-  background: var(--bg-secondary);
+  padding: 8px 12px;
+  background: var(--surface-tint);
   border-bottom: 1px solid var(--border);
   font-size: 11px;
   color: var(--text-muted);
@@ -583,6 +588,8 @@ watch(() => props.project.path, () => {
   font-size: 11px;
   cursor: pointer;
   text-transform: uppercase;
+  font-family: inherit;
+  transition: color 0.1s;
 }
 
 .clear-btn:hover {
@@ -590,14 +597,14 @@ watch(() => props.project.path, () => {
 }
 
 .output-content {
-  padding: 10px 12px;
-  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+  padding: 12px 14px;
+  font-family: 'SF Mono', 'JetBrains Mono', Monaco, monospace;
   font-size: 11px;
   line-height: 1.7;
   max-height: 200px;
   overflow-y: auto;
-  background: #1a1b1e;
-  color: #a8b1c2;
+  background: var(--bg-inset-deep);
+  color: var(--console-text);
 }
 
 .output-content div {

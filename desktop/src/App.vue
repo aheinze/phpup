@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
+import { Command } from "@tauri-apps/plugin-shell";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getStore } from "./composables/useStore";
 import Sidebar from "./components/Sidebar.vue";
 import ProjectInfo from "./components/ProjectInfo.vue";
@@ -12,6 +14,32 @@ import ToolsPanel from "./components/ToolsPanel.vue";
 import TitleBar from "./components/TitleBar.vue";
 
 const store = getStore();
+
+// Theme detection — cross-platform (macOS, Windows, Linux/GNOME)
+async function detectSystemTheme(): Promise<"dark" | "light"> {
+  // matchMedia works reliably on macOS and Windows
+  if (window.matchMedia("(prefers-color-scheme: dark)").matches) return "dark";
+
+  // Linux/WebKitGTK workaround: matchMedia may not reflect GNOME dark preference
+  try {
+    const r = await Command.create("run-bash", ["-c",
+      "gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null"
+    ]).execute();
+    if (r.code === 0 && r.stdout.includes("prefer-dark")) return "dark";
+  } catch {}
+  try {
+    const r = await Command.create("run-bash", ["-c",
+      "gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null"
+    ]).execute();
+    if (r.code === 0 && r.stdout.toLowerCase().includes("dark")) return "dark";
+  } catch {}
+
+  return "light";
+}
+
+function applyTheme(theme: "dark" | "light") {
+  document.documentElement.setAttribute("data-theme", theme);
+}
 
 // Sidebar width
 const sidebarWidth = ref(220);
@@ -32,17 +60,41 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 // Initialize on mount
+let unlistenClose: (() => void) | null = null;
+let statusInterval: ReturnType<typeof setInterval> | null = null;
+
+const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+const themeChangeHandler = async () => applyTheme(await detectSystemTheme());
+
 onMounted(async () => {
   window.addEventListener("keydown", handleKeydown);
+  mediaQuery.addEventListener("change", themeChangeHandler);
+  statusInterval = setInterval(store.refreshAllStatuses, 5000);
+
+  // Async work
+  const theme = await detectSystemTheme();
+  applyTheme(theme);
+
+  unlistenClose = await appWindow.onCloseRequested((event) => {
+    if (runningProjects.value.length > 0) {
+      event.preventDefault();
+      showCloseConfirm.value = true;
+    }
+  });
+
   await store.initialize();
   detectedIde.value = await store.detectIde();
+});
 
-  // Periodically check running status
-  const interval = setInterval(store.refreshAllStatuses, 5000);
-  onUnmounted(() => {
-    clearInterval(interval);
-    window.removeEventListener("keydown", handleKeydown);
-  });
+onUnmounted(() => {
+  if (statusInterval) {
+    clearInterval(statusInterval);
+    statusInterval = null;
+  }
+  window.removeEventListener("keydown", handleKeydown);
+  mediaQuery.removeEventListener("change", themeChangeHandler);
+  unlistenClose?.();
+  unlistenClose = null;
 });
 
 // Group management
@@ -76,6 +128,35 @@ function handlePortConflictConfirm() {
 
 function handlePortConflictCancel() {
   store.portConflict.value = null;
+}
+
+// Close confirmation
+const showCloseConfirm = ref(false);
+const appWindow = getCurrentWindow();
+
+const runningProjects = computed(() =>
+  store.projects.value.filter((p) => p.isRunning)
+);
+
+function handleRequestClose() {
+  if (runningProjects.value.length > 0) {
+    showCloseConfirm.value = true;
+  } else {
+    appWindow.destroy();
+  }
+}
+
+async function handleStopAllAndClose() {
+  showCloseConfirm.value = false;
+  for (const project of runningProjects.value) {
+    await store.stopProject(project);
+  }
+  appWindow.destroy();
+}
+
+function handleCloseWithoutStopping() {
+  showCloseConfirm.value = false;
+  appWindow.destroy();
 }
 
 function handleOpenTools() {
@@ -133,7 +214,7 @@ function handleReorderGroups(fromId: string, toId: string) {
 </script>
 
 <template>
-  <TitleBar />
+  <TitleBar @close="handleRequestClose" />
 
   <!-- Empty state when no projects -->
   <div v-if="store.projects.value.length === 0" class="empty-screen">
@@ -295,6 +376,7 @@ function handleReorderGroups(fromId: string, toId: string) {
         <SettingsPanel
           v-else-if="store.showSettings.value"
           :settings="store.settings.value"
+          :xdebug-available="store.xdebugAvailable.value"
           @update:settings="store.settings.value = $event"
         />
 
@@ -337,6 +419,19 @@ function handleReorderGroups(fromId: string, toId: string) {
       </template>
     </main>
 
+    <!-- Close Confirmation Modal -->
+    <div v-if="showCloseConfirm" class="modal-overlay" @click.self="showCloseConfirm = false">
+      <div class="modal">
+        <h3>Running Servers</h3>
+        <p>{{ runningProjects.length }} server{{ runningProjects.length > 1 ? 's are' : ' is' }} still running. What would you like to do?</p>
+        <div class="modal-actions">
+          <button class="btn-outline" @click="showCloseConfirm = false">Cancel</button>
+          <button class="btn-outline" @click="handleCloseWithoutStopping">Keep Running</button>
+          <button class="btn-danger" @click="handleStopAllAndClose">Stop All & Close</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Notifications -->
     <div v-if="store.notifications.value.length > 0" class="notification-container">
       <div
@@ -372,34 +467,103 @@ function handleReorderGroups(fromId: string, toId: string) {
 }
 
 :root {
-  --bg-canvas: #16171a;
-  --bg: #1e1f22;
-  --bg-secondary: #2b2d30;
-  --bg-hover: #35373b;
-  --bg-active: #3c3f41;
-  --bg-elevated: #393b40;
-  --text: #bcbec4;
-  --text-secondary: #8c8e94;
-  --text-muted: #5e6068;
-  --border: #393b40;
-  --accent: #548af7;
-  --accent-light: rgba(84, 138, 247, 0.12);
-  --success: #57a64a;
-  --success-light: rgba(87, 166, 74, 0.15);
-  --danger: #e05555;
-  --danger-light: rgba(224, 85, 85, 0.12);
-  --warning: #c78b31;
-  --warning-light: rgba(199, 139, 49, 0.15);
+  /* Canvas & surfaces */
+  --bg-canvas: #0d0d0f;
+  --bg: rgba(28, 28, 32, 0.72);
+  --bg-solid: #1c1c20;
+  --bg-secondary: rgba(38, 38, 44, 0.65);
+  --bg-secondary-solid: #26262c;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --bg-active: rgba(255, 255, 255, 0.09);
+  --bg-elevated: rgba(48, 48, 55, 0.7);
+
+  /* Text */
+  --text: #e5e5ea;
+  --text-secondary: #98989f;
+  --text-muted: #58585e;
+
+  /* Borders — luminous white edges */
+  --border: rgba(255, 255, 255, 0.08);
+  --border-light: rgba(255, 255, 255, 0.05);
+
+  /* Accent — Apple blue */
+  --accent: #0a84ff;
+  --accent-hover: #409cff;
+  --accent-light: rgba(10, 132, 255, 0.15);
+
+  /* Semantic */
+  --success: #30d158;
+  --success-light: rgba(48, 209, 88, 0.15);
+  --danger: #ff453a;
+  --danger-light: rgba(255, 69, 58, 0.15);
+  --warning: #ffd60a;
+  --warning-light: rgba(255, 214, 10, 0.12);
+
+  /* Glass */
+  --glass-blur: 24px;
+  --glass-bg: rgba(30, 30, 36, 0.55);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.2);
+
+  /* Radii */
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-xs: 6px;
+
+  /* Surface tints */
+  --surface-tint: rgba(255, 255, 255, 0.03);
+  --surface-subtle: rgba(255, 255, 255, 0.02);
+
+  /* Inset backgrounds */
+  --bg-inset: rgba(0, 0, 0, 0.2);
+  --bg-inset-deep: rgba(0, 0, 0, 0.3);
+
+  /* Modal & overlay */
+  --overlay-bg: rgba(0, 0, 0, 0.45);
+  --modal-bg: rgba(40, 40, 48, 0.85);
+  --modal-border: rgba(255, 255, 255, 0.12);
+  --modal-shadow: 0 24px 80px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+
+  /* Button outline */
+  --btn-outline-bg: rgba(255, 255, 255, 0.06);
+  --btn-outline-border: rgba(255, 255, 255, 0.1);
+  --btn-outline-hover-bg: rgba(255, 255, 255, 0.1);
+  --text-on-accent: #fff;
+
+  /* Console & output */
+  --console-text: rgba(255, 255, 255, 0.6);
+
+  /* Info color */
+  --info: #64d2ff;
+
+  /* Toggle switch */
+  --toggle-bg: rgba(255, 255, 255, 0.12);
+  --toggle-knob: rgba(255, 255, 255, 0.5);
+  --toggle-knob-active: #fff;
+
+  /* Scrollbar */
+  --scrollbar-thumb: rgba(255, 255, 255, 0.1);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.18);
+
+  /* Misc */
+  --drop-hint-border: rgba(255, 255, 255, 0.1);
+  --process-item-bg: rgba(0, 0, 0, 0.15);
+  --notification-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+  --focus-ring: 0 0 0 3px rgba(10, 132, 255, 0.15);
+  --accent-glow: 0 2px 12px rgba(10, 132, 255, 0.3);
+  --danger-hover: #ff6961;
+  --danger-glow: 0 2px 12px rgba(255, 69, 58, 0.3);
 }
 
 html, body, #app {
   height: 100%;
   background: var(--bg-canvas);
   color: var(--text);
-  font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Consolas', monospace;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', system-ui, sans-serif;
   font-size: 13px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 #app {
@@ -410,7 +574,7 @@ html, body, #app {
 .app {
   display: flex;
   flex: 1;
-  gap: 6px;
+  gap: 1px;
   padding: 0 8px 8px;
   background: var(--bg-canvas);
   min-height: 0;
@@ -420,9 +584,13 @@ html, body, #app {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
   overflow: hidden;
-  border-radius: 8px;
+  border-radius: var(--radius);
+  box-shadow: var(--glass-shadow);
 }
 
 .empty-main {
@@ -438,16 +606,17 @@ html, body, #app {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 16px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
-  border-radius: 8px 8px 0 0;
+  background: var(--surface-tint);
+  border-radius: var(--radius) var(--radius) 0 0;
 }
 
 .project-header h1 {
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
+  letter-spacing: -0.01em;
 }
 
 .header-spacer {
@@ -463,9 +632,9 @@ html, body, #app {
   background: transparent;
   color: var(--text-muted);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
-  transition: all 0.1s;
+  transition: all 0.15s ease;
 }
 
 .header-icon-btn:hover {
@@ -474,7 +643,7 @@ html, body, #app {
 }
 
 .header-icon-btn.active {
-  background: var(--bg-active);
+  background: var(--accent-light);
   color: var(--accent);
 }
 
@@ -503,10 +672,10 @@ html, body, #app {
 
 .init-card {
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 24px;
+  border-radius: var(--radius-sm);
+  padding: 28px;
   text-align: center;
-  background: var(--bg-secondary);
+  background: var(--surface-tint);
 }
 
 .init-card p {
@@ -535,44 +704,48 @@ html, body, #app {
 }
 
 .empty-content h1 {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
   color: var(--text);
+  letter-spacing: -0.02em;
 }
 
 .btn-primary {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
+  padding: 8px 18px;
   background: var(--accent);
-  color: #fff;
+  color: var(--text-on-accent);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.1s;
+  transition: all 0.15s ease;
   font-family: inherit;
+  letter-spacing: -0.01em;
 }
 
 .btn-primary:hover {
-  background: #6d9df8;
+  background: var(--accent-hover);
+  box-shadow: var(--accent-glow);
 }
 
 .btn-large {
-  padding: 10px 20px;
+  padding: 10px 22px;
+  font-size: 14px;
 }
 
 /* Notifications */
 .notification-container {
   position: fixed;
-  bottom: 12px;
-  right: 12px;
+  bottom: 16px;
+  right: 16px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   z-index: 1000;
   max-width: 380px;
 }
@@ -580,36 +753,229 @@ html, body, #app {
 .notification-toast {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  border-radius: 4px;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   cursor: pointer;
-  animation: slide-in 0.15s ease;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  border: 1px solid var(--border);
+  animation: slide-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--notification-shadow);
 }
 
 .notification-toast.error {
-  background: #3c2020;
-  color: #e88;
-  border-color: #5a2d2d;
+  background: var(--danger-light);
+  color: var(--danger);
+  border-color: var(--danger-light);
 }
 
 .notification-toast.warning {
-  background: #3c3420;
-  color: #e8c36a;
-  border-color: #5a4d2d;
+  background: var(--warning-light);
+  color: var(--warning);
+  border-color: var(--warning-light);
 }
 
 .notification-toast.info {
-  background: #1e2a3c;
-  color: #7ab0e8;
-  border-color: #2d3d5a;
+  background: var(--accent-light);
+  color: var(--info);
+  border-color: var(--accent-light);
 }
 
 @keyframes slide-in {
-  from { transform: translateX(100%); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+  from { transform: translateY(8px) scale(0.96); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Close confirmation modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay-bg);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  animation: overlay-in 0.15s ease;
+}
+
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal {
+  background: var(--modal-bg);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border: 1px solid var(--modal-border);
+  border-radius: var(--radius);
+  padding: 22px;
+  width: 380px;
+  max-width: 90%;
+  box-shadow: var(--modal-shadow);
+  animation: modal-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modal-in {
+  from { transform: scale(0.95) translateY(8px); opacity: 0; }
+  to { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+.modal h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  letter-spacing: -0.02em;
+}
+
+.modal p {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.btn-outline {
+  padding: 7px 16px;
+  background: var(--btn-outline-bg);
+  color: var(--text);
+  border: 1px solid var(--btn-outline-border);
+  border-radius: var(--radius-xs);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-outline:hover {
+  background: var(--btn-outline-hover-bg);
+}
+
+.btn-danger {
+  padding: 7px 16px;
+  background: var(--danger);
+  color: var(--text-on-accent);
+  border: none;
+  border-radius: var(--radius-xs);
+  font-size: 13px;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-danger:hover {
+  background: var(--danger-hover);
+  box-shadow: var(--danger-glow);
+}
+
+/* Light theme */
+:root[data-theme="light"] {
+  /* Canvas & surfaces */
+  --bg-canvas: #f5f5f7;
+  --bg: rgba(255, 255, 255, 0.72);
+  --bg-solid: #ffffff;
+  --bg-secondary: rgba(245, 245, 247, 0.65);
+  --bg-secondary-solid: #f0f0f2;
+  --bg-hover: rgba(0, 0, 0, 0.04);
+  --bg-active: rgba(0, 0, 0, 0.07);
+  --bg-elevated: rgba(255, 255, 255, 0.85);
+
+  /* Text */
+  --text: #1d1d1f;
+  --text-secondary: #6e6e73;
+  --text-muted: #aeaeb2;
+
+  /* Borders */
+  --border: rgba(0, 0, 0, 0.1);
+  --border-light: rgba(0, 0, 0, 0.06);
+
+  /* Accent */
+  --accent: #007aff;
+  --accent-hover: #0066d6;
+  --accent-light: rgba(0, 122, 255, 0.1);
+
+  /* Semantic */
+  --success: #34c759;
+  --success-light: rgba(52, 199, 89, 0.12);
+  --danger: #ff3b30;
+  --danger-light: rgba(255, 59, 48, 0.1);
+  --warning: #ff9500;
+  --warning-light: rgba(255, 149, 0, 0.1);
+
+  /* Glass */
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-shadow: 0 4px 16px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 0, 0, 0.05);
+
+  /* Surface tints */
+  --surface-tint: rgba(0, 0, 0, 0.02);
+  --surface-subtle: rgba(0, 0, 0, 0.015);
+
+  /* Inset backgrounds */
+  --bg-inset: rgba(0, 0, 0, 0.04);
+  --bg-inset-deep: rgba(0, 0, 0, 0.06);
+
+  /* Modal & overlay */
+  --overlay-bg: rgba(0, 0, 0, 0.25);
+  --modal-bg: rgba(255, 255, 255, 0.88);
+  --modal-border: rgba(0, 0, 0, 0.1);
+  --modal-shadow: 0 24px 80px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.05) inset;
+
+  /* Button outline */
+  --btn-outline-bg: rgba(0, 0, 0, 0.04);
+  --btn-outline-border: rgba(0, 0, 0, 0.12);
+  --btn-outline-hover-bg: rgba(0, 0, 0, 0.07);
+
+  /* Console text */
+  --console-text: rgba(0, 0, 0, 0.55);
+
+  /* Info */
+  --info: #0055cc;
+
+  /* Toggle switch */
+  --toggle-bg: rgba(0, 0, 0, 0.12);
+  --toggle-knob: rgba(255, 255, 255, 0.9);
+
+  /* Scrollbar */
+  --scrollbar-thumb: rgba(0, 0, 0, 0.12);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.2);
+
+  /* Misc */
+  --drop-hint-border: rgba(0, 0, 0, 0.15);
+  --process-item-bg: rgba(0, 0, 0, 0.03);
+  --notification-shadow: 0 8px 32px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  --focus-ring: 0 0 0 3px rgba(0, 122, 255, 0.2);
+  --accent-glow: 0 2px 12px rgba(0, 122, 255, 0.2);
+  --danger-hover: #e0342b;
+  --danger-glow: 0 2px 12px rgba(255, 59, 48, 0.2);
 }
 </style>

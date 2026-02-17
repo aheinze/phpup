@@ -57,7 +57,7 @@ function selectFile(file: string) {
 <style scoped>
 .content-section {
   flex: 1;
-  padding: 16px;
+  padding: 18px;
   overflow-y: auto;
 }
 
@@ -66,7 +66,7 @@ function selectFile(file: string) {
 }
 
 .section-header h2 {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -79,11 +79,10 @@ function selectFile(file: string) {
 
 .tabs-pills {
   display: inline-flex;
-  gap: 0;
-  background: var(--bg);
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  overflow: hidden;
+  gap: 2px;
+  background: var(--bg-inset);
+  border-radius: var(--radius-xs);
+  padding: 2px;
 }
 
 .tab-pill {
@@ -93,26 +92,22 @@ function selectFile(file: string) {
   padding: 5px 12px;
   background: transparent;
   border: none;
+  border-radius: 5px;
   font-size: 12px;
   font-family: inherit;
   font-weight: 500;
   color: var(--text-muted);
   cursor: pointer;
-  transition: all 0.1s;
-  border-right: 1px solid var(--border);
-}
-
-.tab-pill:last-child {
-  border-right: none;
+  transition: all 0.15s ease;
 }
 
 .tab-pill:hover:not(.active) {
   color: var(--text);
-  background: var(--bg-hover);
+  background: var(--btn-outline-bg);
 }
 
 .tab-pill.active {
-  background: var(--bg-active);
+  background: var(--btn-outline-hover-bg);
   color: var(--accent);
 }
 
@@ -127,23 +122,27 @@ function selectFile(file: string) {
 
 .caddyfile-editor {
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
 .caddyfile-textarea {
   width: 100%;
   min-height: 400px;
-  padding: 12px;
+  padding: 14px;
   border: none;
-  background: var(--bg);
-  font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Consolas', monospace;
+  background: var(--bg-inset-deep);
+  font-family: 'SF Mono', 'JetBrains Mono', Monaco, 'Consolas', monospace;
   font-size: 12px;
   line-height: 1.7;
   color: var(--text);
   resize: vertical;
   outline: none;
   tab-size: 2;
+}
+
+.caddyfile-textarea:focus {
+  background: var(--bg-inset-deep);
 }
 
 .caddyfile-textarea::placeholder {

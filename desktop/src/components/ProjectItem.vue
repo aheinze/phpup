@@ -110,9 +110,9 @@ function handleFaviconError() {
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
-  transition: background 0.1s;
+  transition: all 0.15s ease;
 }
 
 .project-item:hover {
@@ -120,12 +120,12 @@ function handleFaviconError() {
 }
 
 .project-item.active {
-  background: var(--bg-active);
+  background: var(--accent-light);
 }
 
 .status-indicator {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
   margin-right: -2px;
@@ -133,7 +133,7 @@ function handleFaviconError() {
 
 .status-indicator.running {
   background: var(--success);
-  box-shadow: 0 0 6px rgba(87, 166, 74, 0.4);
+  box-shadow: 0 0 8px rgba(48, 209, 88, 0.5);
 }
 
 .status-indicator.starting {
@@ -143,6 +143,7 @@ function handleFaviconError() {
 
 .status-indicator.crashed {
   background: var(--danger);
+  box-shadow: 0 0 6px rgba(255, 69, 58, 0.4);
 }
 
 @keyframes pulse-dot {
@@ -154,7 +155,7 @@ function handleFaviconError() {
   width: 14px;
   height: 14px;
   flex-shrink: 0;
-  border-radius: 2px;
+  border-radius: 3px;
   object-fit: contain;
 }
 
@@ -166,19 +167,21 @@ function handleFaviconError() {
   font-size: 13px;
   line-height: 1;
   color: var(--text);
+  letter-spacing: -0.01em;
 }
 
 .project-name-input {
   flex: 1;
   min-width: 0;
-  background: var(--bg);
+  background: var(--bg-inset-deep);
   border: 1px solid var(--accent);
-  border-radius: 3px;
-  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  padding: 2px 6px;
   font-size: 13px;
   font-family: inherit;
   color: var(--text);
   outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .project-action-btn {
@@ -188,12 +191,12 @@ function handleFaviconError() {
   width: 20px;
   height: 20px;
   border: none;
-  border-radius: 3px;
+  border-radius: 4px;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
   opacity: 0;
-  transition: all 0.1s;
+  transition: all 0.15s ease;
   flex-shrink: 0;
 }
 
