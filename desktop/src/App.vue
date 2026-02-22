@@ -395,7 +395,7 @@ function handleReorderGroups(fromId: string, toId: string) {
         <ProjectInfo
           v-else
           :project="store.selectedProject.value"
-          :host="store.settings.value.host"
+          :settings="store.settings.value"
           :output="store.projectOutput.value"
           :detected-ide="detectedIde"
           @open-browser="store.openInBrowser(store.selectedProject.value!)"
@@ -411,7 +411,7 @@ function handleReorderGroups(fromId: string, toId: string) {
           :show-caddyfile="store.showCaddyfile.value"
           @init="store.initProject(store.selectedProject.value!)"
           @configure="store.showSettings.value = true"
-          @cancel-settings="store.showSettings.value = false"
+          @cancel-settings="store.loadProjectSettings(store.selectedProject.value!); store.showSettings.value = false"
           @save-settings="store.saveSettings"
           @cancel-caddyfile="store.showCaddyfile.value = false"
           @save-caddyfile="handleSaveCaddyfile"

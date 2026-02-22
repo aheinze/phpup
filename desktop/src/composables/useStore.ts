@@ -37,6 +37,7 @@ function getPathSuffix(path: string, depth = 2): string {
 }
 
 function projectPathMatchesFragment(projectPath: string, pathFragment: string): boolean {
+  if (!pathFragment) return false;
   const projectSuffix = getPathSuffix(projectPath);
   const fragmentSuffix = getPathSuffix(pathFragment);
   return (
@@ -58,9 +59,11 @@ function parsePhpupListOutput(output: string): PhpupListedInstance[] {
     const port = portMatch ? portMatch[1] : null;
 
     let pathFragment: string | null = null;
-    const pathMatch = line.match(/\s+(\S*\/.+?)\s+\.phpup/);
-    if (pathMatch) {
-      pathFragment = pathMatch[1];
+    
+    // Split line by whitespace to grab the 4th column (STARTED FROM)
+    const chunks = line.trim().split(/\s+/);
+    if (chunks.length >= 4) {
+      pathFragment = chunks[3];
       if (pathFragment.startsWith("...")) {
         pathFragment = pathFragment.substring(3);
       }
@@ -355,15 +358,46 @@ function useStore() {
     saveData();
   }
 
-  function removeProject(project: Project) {
+  async function removeProject(project: Project) {
     if (project.isRunning) {
-      stopProject(project);
+      await stopProject(project);
     }
     projects.value = projects.value.filter((p) => p.id !== project.id);
     if (selectedProject.value?.id === project.id) {
       selectedProject.value = null;
     }
     saveData();
+  }
+
+  async function loadProjectSettings(project: Project) {
+    if (!project.hasConfig) return;
+    const command = Command.create("run-bash", [
+      "-c",
+      `cat ${shellEscape(project.path + "/.phpup/config")} 2>/dev/null`,
+    ]);
+    const result = await command.execute();
+    if (result.code === 0) {
+      const config = result.stdout;
+      const hostMatch = config.match(/HOST=["']?([^"'\n]+)["']?/);
+      const domainMatch = config.match(/DOMAIN=["']?([^"'\n]+)["']?/);
+      const threadsMatch = config.match(/PHP_THREADS=["']?([^"'\n]+)["']?/);
+      const httpsMatch = config.match(/HTTPS_MODE=["']?([^"'\n]+)["']?/);
+      const workerMatch = config.match(/WORKER_MODE=["']?(true|false|1|0)["']?/i);
+      const watchMatch = config.match(/WATCH_MODE=["']?(true|false|1|0)["']?/i);
+      const compressionMatch = config.match(/COMPRESSION=["']?(true|false|1|0)["']?/i);
+      const browserMatch = config.match(/OPEN_BROWSER=["']?(true|false|1|0)["']?/i);
+      const xdebugMatch = config.match(/XDEBUG=["']?(true|false|1|0)["']?/i);
+
+      if (hostMatch) settings.value.host = hostMatch[1];
+      if (domainMatch) settings.value.domain = domainMatch[1];
+      if (threadsMatch) settings.value.phpThreads = threadsMatch[1];
+      if (httpsMatch) settings.value.httpsMode = httpsMatch[1] as "off" | "local" | "on";
+      if (workerMatch) settings.value.workerMode = ["true", "1"].includes(workerMatch[1].toLowerCase());
+      if (watchMatch) settings.value.watchMode = ["true", "1"].includes(watchMatch[1].toLowerCase());
+      if (compressionMatch) settings.value.compression = ["true", "1"].includes(compressionMatch[1].toLowerCase());
+      if (browserMatch) settings.value.openBrowser = ["true", "1"].includes(browserMatch[1].toLowerCase());
+      if (xdebugMatch) settings.value.xdebug = ["true", "1"].includes(xdebugMatch[1].toLowerCase());
+    }
   }
 
   async function selectProject(project: Project) {
@@ -383,34 +417,7 @@ function useStore() {
     settings.value.docroot = project.docroot;
 
     if (hasConfig) {
-      const command = Command.create("run-bash", [
-        "-c",
-        `cat ${shellEscape(project.path + "/.phpup/config")} 2>/dev/null`,
-      ]);
-      const result = await command.execute();
-      if (result.code === 0) {
-        const config = result.stdout;
-        const hostMatch = config.match(/HOST=["']?([^"'\n]+)["']?/);
-        const domainMatch = config.match(/DOMAIN=["']?([^"'\n]+)["']?/);
-        const threadsMatch = config.match(/PHP_THREADS=["']?([^"'\n]+)["']?/);
-        const httpsMatch = config.match(/HTTPS_MODE=["']?([^"'\n]+)["']?/);
-        const workerMatch = config.match(/WORKER_MODE=["']?(true|false|1|0)["']?/i);
-        const watchMatch = config.match(/WATCH_MODE=["']?(true|false|1|0)["']?/i);
-        const compressionMatch = config.match(/COMPRESSION=["']?(true|false|1|0)["']?/i);
-        const browserMatch = config.match(/OPEN_BROWSER=["']?(true|false|1|0)["']?/i);
-
-        if (hostMatch) settings.value.host = hostMatch[1];
-        if (domainMatch) settings.value.domain = domainMatch[1];
-        if (threadsMatch) settings.value.phpThreads = threadsMatch[1];
-        if (httpsMatch) settings.value.httpsMode = httpsMatch[1] as "off" | "local" | "on";
-        if (workerMatch) settings.value.workerMode = ["true", "1"].includes(workerMatch[1].toLowerCase());
-        if (watchMatch) settings.value.watchMode = ["true", "1"].includes(watchMatch[1].toLowerCase());
-        if (compressionMatch) settings.value.compression = ["true", "1"].includes(compressionMatch[1].toLowerCase());
-        if (browserMatch) settings.value.openBrowser = ["true", "1"].includes(browserMatch[1].toLowerCase());
-
-        const xdebugMatch = config.match(/XDEBUG=["']?(true|false|1|0)["']?/i);
-        if (xdebugMatch) settings.value.xdebug = ["true", "1"].includes(xdebugMatch[1].toLowerCase());
-      }
+      await loadProjectSettings(project);
     }
 
     const proc = runningProcesses.value.get(project.id);
@@ -591,6 +598,11 @@ XDEBUG="${settings.value.xdebug ? 1 : 0}"
   async function startProject(project: Project, overridePort?: string) {
     if (project.isRunning) return;
 
+    // Auto-save settings if we are in the settings tab
+    if (showSettings.value) {
+      await saveSettings();
+    }
+
     // Validate config before starting
     const errors = validateSettings();
     if (errors.length > 0) {
@@ -661,10 +673,19 @@ XDEBUG="${settings.value.xdebug ? 1 : 0}"
         output.push(data);
         capOutput(output);
         const lower = data.toLowerCase();
-        if (!serverReady && (lower.includes("started") || lower.includes("listening") || lower.includes("serving") || lower.includes("running") || lower.includes("ready"))) {
+        // Handle Polkit/pkexec authorization failures securely
+        if (lower.includes("not authorized") || lower.includes("authentication agent") || lower.includes("authorization failed")) {
+          project.status = "crashed";
+          project.isRunning = false;
+          addNotification("Administrator privileges are required to configure local domains. Authentication was cancelled or failed.", "error");
+          
+          // Forcefully terminate this broken command
+          child.kill().catch(() => {});
+        } else if (!serverReady && (lower.includes("started") || lower.includes("listening") || lower.includes("serving") || lower.includes("running") || lower.includes("ready"))) {
           serverReady = true;
           project.status = "running";
         }
+        
         if (selectedProject.value?.id === project.id) {
           projectOutput.value = [...output];
         }
@@ -831,11 +852,15 @@ XDEBUG="${settings.value.xdebug ? 1 : 0}"
 
     // Fallback: kill by port (works when process is dumpable)
     if (!killed && isValidPort(project.port)) {
-      await Command.create("run-bash", [
-        "-c",
-        `fuser -k ${project.port}/tcp 2>/dev/null || lsof -ti:${project.port} | xargs -r kill 2>/dev/null || true`,
-      ]).execute();
-      killed = !await isPortServingFrankenphp(project);
+      if (await isPortServingFrankenphp(project)) {
+        await Command.create("run-bash", [
+          "-c",
+          `for pid in $(fuser ${project.port}/tcp 2>/dev/null || lsof -ti:${project.port} -sTCP:LISTEN 2>/dev/null); do if ps -p $pid -o comm= 2>/dev/null | grep -qiE 'frankenphp|phpup'; then kill $pid 2>/dev/null || true; fi; done`,
+        ]).execute();
+        killed = !await isPortServingFrankenphp(project);
+      } else {
+        killed = true;
+      }
     }
 
     // Last resort: only try safe candidate PIDs for this project.
@@ -908,26 +933,22 @@ XDEBUG="${settings.value.xdebug ? 1 : 0}"
       }
     }
 
-    // Second pass: for unmatched instances, verify by probing each project URL.
+    // Second pass: for instances that lacked path info in --list, rely strictly on port tracking ONLY if the port is unique.
     const unmatchedInstances = instances.filter((_, i) => !matchedInstanceIdxs.has(i));
-    if (unmatchedInstances.length > 0) {
-      for (const project of projects.value) {
-        if (matchedProjectIds.has(project.id)) continue;
-        if (!isValidPort(project.port)) continue;
+    for (const instance of unmatchedInstances) {
+      // If it has a path fragment but didn't match any project in the first pass, 
+      // it's an untracked project running externally. Skip it.
+      if (instance.pathFragment || !instance.port) continue;
 
-        if (await isProjectServingFrankenphp(project)) {
-          matchedProjectIds.add(project.id);
+      const candidateProjects = projects.value.filter(
+        (p) => !matchedProjectIds.has(p.id) && p.port === instance.port
+      );
 
-          // Prefer exact port-to-instance PID when unique.
-          const samePort = unmatchedInstances.filter(
-            (instance) => instance.port && instance.port === project.port
-          );
-          if (samePort.length === 1) {
-            runningPids.value.set(project.id, samePort[0].pid);
-          } else if (unmatchedInstances.length === 1) {
-            runningPids.value.set(project.id, unmatchedInstances[0].pid);
-          }
-        }
+      // If exactly one tracked project expects this port, assume it's a match
+      if (candidateProjects.length === 1) {
+        const p = candidateProjects[0];
+        matchedProjectIds.add(p.id);
+        runningPids.value.set(p.id, instance.pid);
       }
     }
 
@@ -1117,6 +1138,7 @@ XDEBUG="${settings.value.xdebug ? 1 : 0}"
     selectProject,
     initProject,
     saveSettings,
+    loadProjectSettings,
     validateSettings,
     loadCaddyfile,
     loadSelectedCaddyfile,

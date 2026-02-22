@@ -227,6 +227,33 @@ EOF
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
 
+# Check if we're running interactively
+is_interactive() {
+  [ -t 0 ] && [ -t 1 ]
+}
+
+# Wrapper for commands needing elevation
+elevate_cmd() {
+  local cmd="$*"
+  
+  # If we have an interactive terminal, just use sudo 
+  if is_interactive; then
+    sudo sh -c "$cmd"
+    return $?
+  fi
+  
+  # For non-interactive (e.g. Tauri Desktop App running in bg), try GUI elevation
+  if command_exists pkexec; then
+    pkexec sh -c "$cmd"
+  elif command_exists osascript; then
+    # macOS fallback
+    osascript -e "do shell script \"$cmd\" with administrator privileges"
+  else
+    # Fallback to sudo, though it will likely fail without a tty
+    sudo sh -c "$cmd"
+  fi
+}
+
 # Cross-platform stat helpers (Linux uses -c, macOS uses -f)
 get_file_perms() {
   local file="$1"
@@ -446,7 +473,12 @@ setup_mkcert() {
   # Install local CA if not already installed
   if ! mkcert -CAROOT >/dev/null 2>&1 || [ ! -d "$(mkcert -CAROOT)" ]; then
     log "🔧 Installing local Certificate Authority..."
-    mkcert -install
+    if ! is_interactive; then
+      log "   Elevating privileges for mkcert CA installation..."
+      elevate_cmd "mkcert -install"
+    else
+      mkcert -install
+    fi
   fi
 
   return 0
@@ -500,8 +532,8 @@ manage_hosts_entry() {
 
   # Check if we need sudo
   if [ ! -w "$hosts_file" ]; then
-    if ! command_exists sudo; then
-      log "⚠️  Cannot modify $hosts_file (no sudo available)"
+    if ! command_exists sudo && ! command_exists pkexec && ! command_exists osascript; then
+      log "⚠️  Cannot modify $hosts_file (no elevation tool available)"
       return 1
     fi
   fi
@@ -520,7 +552,7 @@ manage_hosts_entry() {
     if [ -w "$hosts_file" ]; then
       echo "$ip $domain $marker" >> "$hosts_file"
     else
-      echo "$ip $domain $marker" | sudo tee -a "$hosts_file" >/dev/null
+      elevate_cmd "echo '$ip $domain $marker' >> '$hosts_file'" >/dev/null
     fi
 
     log "✅ Added $domain → $ip to hosts file"
@@ -534,7 +566,7 @@ manage_hosts_entry() {
       if [ -w "$hosts_file" ]; then
         sed -i.backup "/${escaped_domain}.*${marker}/d" "$hosts_file"
       else
-        sudo sed -i.backup "/${escaped_domain}.*${marker}/d" "$hosts_file"
+        elevate_cmd "sed -i.backup '/${escaped_domain}.*${marker}/d' '$hosts_file'"
       fi
 
       log "✅ Removed $domain from hosts file"

@@ -2,12 +2,12 @@
 import { ref, computed, watch } from "vue";
 import { Command } from "@tauri-apps/plugin-shell";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import type { Project } from "../types";
+import type { Project, ProjectSettings } from "../types";
 import ConsoleOutput from "./ConsoleOutput.vue";
 
 const props = defineProps<{
   project: Project;
-  host: string;
+  settings: ProjectSettings;
   output: string[];
   detectedIde: string | null;
 }>();
@@ -19,7 +19,11 @@ const emit = defineEmits<{
   openIde: [];
 }>();
 
-const serverUrl = computed(() => `http://${props.host}:${props.project.port}`);
+const serverUrl = computed(() => {
+  const protocol = props.settings.httpsMode !== "off" ? "https" : "http";
+  const hostname = props.settings.domain || `${props.settings.host}:${props.project.port}`;
+  return `${protocol}://${hostname}`;
+});
 const urlCopied = ref(false);
 
 async function copyUrl() {
