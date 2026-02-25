@@ -1551,7 +1551,7 @@ display_errors = On
 display_startup_errors = On
 error_reporting = E_ALL
 log_errors = On
-error_log = .phpup/php_errors.log
+error_log = $(pwd)/.phpup/php_errors.log
 
 ; File uploads (generous limits)
 upload_max_filesize = 50M
@@ -1559,7 +1559,7 @@ post_max_size = 50M
 max_file_uploads = 20
 
 ; Sessions (secure defaults)
-session.save_path = .phpup/sessions
+session.save_path = $(pwd)/.phpup/sessions
 session.gc_maxlifetime = 1440
 session.cookie_httponly = On
 session.use_strict_mode = On
@@ -2068,7 +2068,7 @@ export DOCUMENT_ROOT="${DOCROOT}"
 # Worker file for worker mode templates
 export WORKER_FILE="${WORKER_FILE}"
 # Config directory for logs and certs
-export PHPUP_DIR=".phpup"
+export PHPUP_DIR="$(pwd)/.phpup"
 
 if [ -n "$CADDYFILE" ]; then
   MODE="caddyfile"
