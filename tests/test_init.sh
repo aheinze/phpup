@@ -7,8 +7,9 @@
 
 test_start "init creates .phpup directory"
 rm -rf .phpup
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_dir_exists ".phpup"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_dir_exists ".phpup"; then
     test_pass
 else
     test_fail "Should create .phpup directory"
@@ -17,8 +18,9 @@ rm -rf .phpup
 
 test_start "init creates php.ini file"
 rm -rf .phpup
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_file_exists ".phpup/php.ini"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_exists ".phpup/php.ini"; then
     test_pass
 else
     test_fail "Should create php.ini"
@@ -27,8 +29,9 @@ rm -rf .phpup
 
 test_start "init creates Caddyfile.classic"
 rm -rf .phpup
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_file_exists ".phpup/Caddyfile.classic"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_exists ".phpup/Caddyfile.classic"; then
     test_pass
 else
     test_fail "Should create Caddyfile.classic"
@@ -37,8 +40,9 @@ rm -rf .phpup
 
 test_start "init creates Caddyfile.worker"
 rm -rf .phpup
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_file_exists ".phpup/Caddyfile.worker"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_exists ".phpup/Caddyfile.worker"; then
     test_pass
 else
     test_fail "Should create Caddyfile.worker"
@@ -51,8 +55,9 @@ rm -rf .phpup
 
 test_start "php.ini contains memory_limit"
 rm -rf .phpup
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_file_contains ".phpup/php.ini" "memory_limit"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_contains ".phpup/php.ini" "memory_limit"; then
     test_pass
 else
     test_fail "php.ini should contain memory_limit"
@@ -61,8 +66,9 @@ rm -rf .phpup
 
 test_start "php.ini contains error_log"
 rm -rf .phpup
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_file_contains ".phpup/php.ini" "error_log"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_contains ".phpup/php.ini" "error_log"; then
     test_pass
 else
     test_fail "php.ini should contain error_log"
@@ -71,8 +77,9 @@ rm -rf .phpup
 
 test_start "php.ini has development settings by default"
 rm -rf .phpup
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_file_contains ".phpup/php.ini" "display_errors = On"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_contains ".phpup/php.ini" "display_errors = On"; then
     test_pass
 else
     test_fail "php.ini should have development-friendly settings"
@@ -83,60 +90,66 @@ rm -rf .phpup
 # Caddyfile content tests
 #
 
-test_start "Caddyfile.classic contains PHPUP_DIR variable"
+test_start "Caddyfile.classic uses a project access log"
 rm -rf .phpup
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_file_contains ".phpup/Caddyfile.classic" "PHPUP_DIR"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_contains ".phpup/Caddyfile.classic" "$TEST_TMPDIR/.phpup/access.log"; then
     test_pass
 else
-    test_fail "Caddyfile.classic should use PHPUP_DIR variable"
+    test_fail "Caddyfile.classic should log inside the project"
 fi
 rm -rf .phpup
 
-test_start "Caddyfile.worker contains PHPUP_DIR variable"
+test_start "Caddyfile.worker uses a project access log"
 rm -rf .phpup
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_file_contains ".phpup/Caddyfile.worker" "PHPUP_DIR"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_contains ".phpup/Caddyfile.worker" "$TEST_TMPDIR/.phpup/access.log"; then
     test_pass
 else
-    test_fail "Caddyfile.worker should use PHPUP_DIR variable"
+    test_fail "Caddyfile.worker should log inside the project"
 fi
 rm -rf .phpup
 
-test_start "Caddyfile.classic contains HOST variable"
+test_start "Caddyfile.classic binds to loopback"
 rm -rf .phpup
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_file_contains ".phpup/Caddyfile.classic" "HOST"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_contains ".phpup/Caddyfile.classic" "bind 127.0.0.1"; then
     test_pass
 else
-    test_fail "Caddyfile.classic should use HOST variable"
+    test_fail "Caddyfile.classic should bind to loopback"
 fi
 rm -rf .phpup
 
-test_start "Caddyfile.classic contains PORT variable"
+test_start "Caddyfile.classic contains the configured listener"
 rm -rf .phpup
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_file_contains ".phpup/Caddyfile.classic" "PORT"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_contains ".phpup/Caddyfile.classic" "http://127.0.0.1:8000"; then
     test_pass
 else
-    test_fail "Caddyfile.classic should use PORT variable"
+    test_fail "Caddyfile.classic should use the configured listener"
 fi
 rm -rf .phpup
 
-test_start "Caddyfile.classic contains DOCROOT variable"
+test_start "Caddyfile.classic uses the resolved document root"
 rm -rf .phpup
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_file_contains ".phpup/Caddyfile.classic" "DOCROOT"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_contains ".phpup/Caddyfile.classic" 'root \* "'; then
     test_pass
 else
-    test_fail "Caddyfile.classic should use DOCROOT variable"
+    test_fail "Caddyfile.classic should quote the resolved root"
 fi
 rm -rf .phpup
 
 test_start "Caddyfile.classic enables php_server"
 rm -rf .phpup
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_file_contains ".phpup/Caddyfile.classic" "php_server"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_contains ".phpup/Caddyfile.classic" "php_server"; then
     test_pass
 else
     test_fail "Caddyfile.classic should enable php_server"
@@ -145,8 +158,9 @@ rm -rf .phpup
 
 test_start "Caddyfile.worker contains worker directive"
 rm -rf .phpup
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_file_contains ".phpup/Caddyfile.worker" "worker"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_contains ".phpup/Caddyfile.worker" "worker"; then
     test_pass
 else
     test_fail "Caddyfile.worker should have worker directive"
@@ -161,8 +175,9 @@ test_start "init does not overwrite without --force"
 rm -rf .phpup
 mkdir -p .phpup
 echo "# Custom config" > .phpup/php.ini
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_file_contains ".phpup/php.ini" "Custom config"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_contains ".phpup/php.ini" "Custom config"; then
     test_pass
 else
     test_fail "Should not overwrite without --force"
@@ -173,8 +188,9 @@ test_start "init --force overwrites existing files"
 rm -rf .phpup
 mkdir -p .phpup
 echo "# Custom config" > .phpup/php.ini
-"$PHPUP" --init --force >/dev/null 2>&1 || true
-if assert_file_contains ".phpup/php.ini" "memory_limit"; then
+status=0
+"$PHPUP" --init --force >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_contains ".phpup/php.ini" "memory_limit"; then
     test_pass
 else
     test_fail "Should overwrite with --force"
@@ -188,8 +204,9 @@ rm -rf .phpup
 test_start "init detects public docroot"
 rm -rf .phpup public
 mkdir -p public
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_file_contains ".phpup/Caddyfile.classic" "public"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_contains ".phpup/Caddyfile.classic" "public"; then
     test_pass
 else
     test_fail "Should detect public docroot"
@@ -199,8 +216,9 @@ rm -rf .phpup public
 test_start "init detects web docroot"
 rm -rf .phpup web
 mkdir -p web
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_file_contains ".phpup/Caddyfile.classic" "web"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_contains ".phpup/Caddyfile.classic" "web"; then
     test_pass
 else
     test_fail "Should detect web docroot"
@@ -210,8 +228,9 @@ rm -rf .phpup web
 test_start "init with explicit docroot"
 rm -rf .phpup customdoc
 mkdir -p customdoc
-"$PHPUP" --init --docroot customdoc >/dev/null 2>&1 || true
-if assert_file_contains ".phpup/Caddyfile.classic" "customdoc"; then
+status=0
+"$PHPUP" --init --docroot customdoc >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_contains ".phpup/Caddyfile.classic" "customdoc"; then
     test_pass
 else
     test_fail "Should use explicit docroot"
@@ -224,8 +243,9 @@ rm -rf .phpup customdoc
 
 test_start "init with domain creates proper config"
 rm -rf .phpup
-"$PHPUP" --init --domain initdomain.test --save >/dev/null 2>&1 || true
-if assert_file_contains ".phpup/config" "initdomain.test"; then
+status=0
+"$PHPUP" --init --domain initdomain.test --save >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_contains ".phpup/config" "initdomain.test"; then
     test_pass
 else
     test_fail "Should save domain in config"
@@ -238,8 +258,9 @@ rm -rf .phpup
 
 test_start "Caddyfile.classic configures access log"
 rm -rf .phpup
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_file_contains ".phpup/Caddyfile.classic" "access.log"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_contains ".phpup/Caddyfile.classic" "access.log"; then
     test_pass
 else
     test_fail "Should configure access log"
@@ -248,8 +269,9 @@ rm -rf .phpup
 
 test_start "php.ini configures error log in .phpup"
 rm -rf .phpup
-"$PHPUP" --init >/dev/null 2>&1 || true
-if assert_file_contains ".phpup/php.ini" "php_errors.log"; then
+status=0
+"$PHPUP" --init >/dev/null 2>&1 || status=$?
+if [ "$status" -eq 0 ] && assert_file_contains ".phpup/php.ini" "php_errors.log"; then
     test_pass
 else
     test_fail "Should configure PHP error log"

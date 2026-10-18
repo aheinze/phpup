@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getStore } from "./composables/useStore";
 import Sidebar from "./components/Sidebar.vue";
 import ProjectInfo from "./components/ProjectInfo.vue";
+import DoctorPanel from "./components/DoctorPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import CaddyfileEditor from "./components/CaddyfileEditor.vue";
 import ActionBar from "./components/ActionBar.vue";
@@ -42,20 +43,34 @@ function applyTheme(theme: "dark" | "light") {
 }
 
 // Sidebar width
-const sidebarWidth = ref(220);
+const sidebar = ref<InstanceType<typeof Sidebar> | null>(null);
 
 // IDE detection
 const detectedIde = ref<string | null>(null);
 
 // Keyboard shortcuts
 function handleKeydown(e: KeyboardEvent) {
-  if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.repeat || e.isComposing) return;
+  if (showCloseConfirm.value || showRemoveConfirm.value || store.showAddGroup.value || store.portConflict.value) return;
+  const key = e.key.toLowerCase();
+  if (key === "k") { e.preventDefault(); sidebar.value?.focusSearch(); return; }
+  if (key === "s") {
     e.preventDefault();
-    if (store.showSettings.value) {
-      store.saveSettings();
-    } else if (store.showCaddyfile.value) {
-      handleSaveCaddyfile();
-    }
+    if (store.showSettings.value) store.saveSettings();
+    else if (store.showCaddyfile.value) handleSaveCaddyfile();
+    return;
+  }
+  if (store.showSettings.value || store.showCaddyfile.value ||
+      (e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable="true"]'))) return;
+  const project = store.selectedProject.value;
+  if (!project?.hasConfig || project.status === "stopping") return;
+  if (key === "enter" && !e.shiftKey) {
+    e.preventDefault();
+    if (project.status === "running" || project.status === "starting") store.stopProject(project);
+    else store.startProject(project);
+  } else if (key === "r" && e.shiftKey) {
+    e.preventDefault();
+    store.restartProject(project);
   }
 }
 
@@ -135,7 +150,7 @@ const showCloseConfirm = ref(false);
 const appWindow = getCurrentWindow();
 
 const runningProjects = computed(() =>
-  store.projects.value.filter((p) => p.isRunning)
+  store.projects.value.filter((p) => p.isRunning || p.status === "starting" || p.status === "stopping")
 );
 
 function handleRequestClose() {
@@ -148,8 +163,8 @@ function handleRequestClose() {
 
 async function handleStopAllAndClose() {
   showCloseConfirm.value = false;
-  for (const project of runningProjects.value) {
-    await store.stopProject(project);
+  for (const project of [...runningProjects.value]) {
+    if (!await store.stopProject(project)) return;
   }
   appWindow.destroy();
 }
@@ -165,11 +180,6 @@ function handleOpenTools() {
 }
 
 async function handleSaveCaddyfile() {
-  const { valid, error } = await store.validateCaddyfile();
-  if (!valid && error) {
-    store.addNotification(`Caddyfile validation failed: ${error.split("\n")[0]}`, "warning");
-    // Still save, but warn
-  }
   await store.saveCaddyfile();
 }
 
@@ -232,15 +242,17 @@ function handleReorderGroups(fromId: string, toId: string) {
   <div v-else class="app">
     <!-- Sidebar -->
     <Sidebar
+      ref="sidebar"
       :groups="store.groups.value"
       :projects="store.projects.value"
       :ungrouped-projects="store.ungroupedProjects.value"
       :projects-by-group="store.projectsByGroup.value"
       :selected-project="store.selectedProject.value"
       :search-query="store.searchQuery.value"
-      :width="sidebarWidth"
+      :width="store.sidebarWidth.value"
       @update:search-query="store.searchQuery.value = $event"
-      @update:width="sidebarWidth = $event"
+      @update:width="store.sidebarWidth.value = $event"
+      @resize-end="store.saveData"
       @select-project="store.selectProject"
       @start-project="store.startProject"
       @stop-project="store.stopProject"
@@ -297,13 +309,15 @@ function handleReorderGroups(fromId: string, toId: string) {
       <!-- Project selected -->
       <template v-else>
         <div class="project-header">
-          <h1>{{ store.selectedProject.value.name }}</h1>
+          <h1 :title="store.selectedProject.value.name">{{ store.selectedProject.value.name }}</h1>
           <div class="header-spacer"></div>
 
           <!-- Start/Stop -->
           <button
             v-if="store.selectedProject.value.hasConfig"
-            class="header-icon-btn"
+            :disabled="store.selectedProject.value.status === 'stopping'"
+            class="header-icon-btn lifecycle-btn"
+            aria-keyshortcuts="Control+Enter Meta+Enter"
             :class="{ 'header-icon-success': store.selectedProject.value.status === 'stopped' || store.selectedProject.value.status === 'crashed', 'header-icon-danger': store.selectedProject.value.status === 'running' || store.selectedProject.value.status === 'starting' }"
             @click="(store.selectedProject.value.status === 'running' || store.selectedProject.value.status === 'starting') ? store.stopProject(store.selectedProject.value!) : store.startProject(store.selectedProject.value!)"
             :title="(store.selectedProject.value.status === 'running' || store.selectedProject.value.status === 'starting') ? 'Stop' : 'Start'"
@@ -314,6 +328,14 @@ function handleReorderGroups(fromId: string, toId: string) {
             <svg v-else width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
               <rect x="3" y="3" width="10" height="10" rx="1"/>
             </svg>
+            <span>{{ store.selectedProject.value.status === 'stopping' ? 'Stopping…' : (store.selectedProject.value.status === 'running' || store.selectedProject.value.status === 'starting') ? 'Stop' : 'Start' }}</span>
+          </button>
+          <button v-if="store.selectedProject.value.status === 'running' || store.restartingProjects.value.has(store.selectedProject.value.id)"
+            class="header-icon-btn lifecycle-btn" title="Restart" aria-keyshortcuts="Control+Shift+R Meta+Shift+R"
+            :disabled="store.restartingProjects.value.has(store.selectedProject.value.id)"
+            @click="store.restartProject(store.selectedProject.value!)">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 6a5 5 0 10.2 3M13 2v4H9"/></svg>
+            {{ store.restartingProjects.value.has(store.selectedProject.value.id) ? 'Restarting…' : 'Restart' }}
           </button>
 
           <!-- Settings -->
@@ -370,6 +392,7 @@ function handleReorderGroups(fromId: string, toId: string) {
             <p>This project hasn't been configured yet.</p>
             <p class="init-hint">Click Initialize to auto-detect settings, or Configure to set up manually.</p>
           </div>
+          <DoctorPanel :path="store.selectedProject.value.path" />
         </div>
 
         <!-- Settings Panel -->
@@ -399,7 +422,7 @@ function handleReorderGroups(fromId: string, toId: string) {
           :output="store.projectOutput.value"
           :detected-ide="detectedIde"
           @open-browser="store.openInBrowser(store.selectedProject.value!)"
-          @clear-output="store.projectOutput.value = []"
+          @clear-output="store.clearOutput"
           @open-ide="handleOpenIde"
         />
 
@@ -439,6 +462,11 @@ function handleReorderGroups(fromId: string, toId: string) {
         :key="notif.id"
         class="notification-toast"
         :class="notif.type"
+        role="button"
+        tabindex="0"
+        :aria-label="notif.message + ' — dismiss'"
+        @keydown.enter="store.dismissNotification(notif.id)"
+        @keydown.space.prevent="store.dismissNotification(notif.id)"
         @click="store.dismissNotification(notif.id)"
       >
         <svg v-if="notif.type === 'error'" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -604,6 +632,7 @@ html, body, #app {
 
 .project-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 14px 18px;
@@ -613,29 +642,38 @@ html, body, #app {
 }
 
 .project-header h1 {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
   letter-spacing: -0.01em;
 }
 
-.header-spacer {
-  flex: 1;
-}
+.header-spacer { display: none; }
 
 .header-icon-btn {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   width: 28px;
   height: 28px;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   border: none;
   border-radius: var(--radius-xs);
   cursor: pointer;
   transition: all 0.15s ease;
 }
+
+.header-icon-btn.lifecycle-btn { width: auto; gap: 6px; padding: 0 9px; color: var(--text); border: 1px solid var(--border); font: inherit; font-size: 12px; }
+.header-icon-btn:disabled { opacity: .5; cursor: default; }
+.header-icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 760px) { .project-header h1 { flex-basis: 100%; } }
 
 .header-icon-btn:hover {
   background: var(--bg-hover);

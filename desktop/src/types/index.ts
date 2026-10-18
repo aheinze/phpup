@@ -11,6 +11,7 @@ export interface Project {
   docroot: string;
   groupId?: string;
   favicon?: string;
+  url?: string;
 }
 
 export interface Group {
@@ -25,7 +26,7 @@ export interface RunningProcess {
   output: string[];
 }
 
-export type ProjectStatus = "stopped" | "starting" | "running" | "crashed";
+export type ProjectStatus = "stopped" | "starting" | "stopping" | "running" | "crashed";
 
 export interface ProjectSettings {
   host: string;

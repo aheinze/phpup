@@ -6,7 +6,8 @@
 #
 
 test_start "help flag shows usage"
-output=$("$PHPUP" --help 2>&1) || true
+status=0
+output=$("$PHPUP" --help 2>&1) || status=$?
 if assert_contains "$output" "Usage: phpup"; then
     test_pass
 else
@@ -14,7 +15,8 @@ else
 fi
 
 test_start "help flag shows basic options"
-output=$("$PHPUP" --help 2>&1) || true
+status=0
+output=$("$PHPUP" --help 2>&1) || status=$?
 if assert_contains "$output" "--host HOST"; then
     test_pass
 else
@@ -22,7 +24,8 @@ else
 fi
 
 test_start "help flag shows --port option"
-output=$("$PHPUP" --help 2>&1) || true
+status=0
+output=$("$PHPUP" --help 2>&1) || status=$?
 if assert_contains "$output" "--port PORT"; then
     test_pass
 else
@@ -30,7 +33,8 @@ else
 fi
 
 test_start "help flag shows --docroot option"
-output=$("$PHPUP" --help 2>&1) || true
+status=0
+output=$("$PHPUP" --help 2>&1) || status=$?
 if assert_contains "$output" "--docroot DIR"; then
     test_pass
 else
@@ -38,7 +42,8 @@ else
 fi
 
 test_start "help flag shows --init option"
-output=$("$PHPUP" --help 2>&1) || true
+status=0
+output=$("$PHPUP" --help 2>&1) || status=$?
 if assert_contains "$output" "--init"; then
     test_pass
 else
@@ -46,7 +51,8 @@ else
 fi
 
 test_start "help flag shows --worker option"
-output=$("$PHPUP" --help 2>&1) || true
+status=0
+output=$("$PHPUP" --help 2>&1) || status=$?
 if assert_contains "$output" "--worker"; then
     test_pass
 else
@@ -54,7 +60,8 @@ else
 fi
 
 test_start "help flag shows --https option"
-output=$("$PHPUP" --help 2>&1) || true
+status=0
+output=$("$PHPUP" --help 2>&1) || status=$?
 if assert_contains "$output" "--https MODE"; then
     test_pass
 else
@@ -62,7 +69,8 @@ else
 fi
 
 test_start "help flag shows examples section"
-output=$("$PHPUP" --help 2>&1) || true
+status=0
+output=$("$PHPUP" --help 2>&1) || status=$?
 if assert_contains "$output" "Examples:"; then
     test_pass
 else
@@ -70,7 +78,8 @@ else
 fi
 
 test_start "short help flag -h works"
-output=$("$PHPUP" -h 2>&1) || true
+status=0
+output=$("$PHPUP" -h 2>&1) || status=$?
 if assert_contains "$output" "Usage: phpup"; then
     test_pass
 else
@@ -78,7 +87,8 @@ else
 fi
 
 test_start "help shows environment variables section"
-output=$("$PHPUP" --help 2>&1) || true
+status=0
+output=$("$PHPUP" --help 2>&1) || status=$?
 if assert_contains "$output" "Environment variables available to Caddyfile"; then
     test_pass
 else
@@ -86,7 +96,8 @@ else
 fi
 
 test_start "help mentions PHPUP_DIR variable"
-output=$("$PHPUP" --help 2>&1) || true
+status=0
+output=$("$PHPUP" --help 2>&1) || status=$?
 if assert_contains "$output" "PHPUP_DIR"; then
     test_pass
 else

@@ -25,6 +25,14 @@ SAVE_MODE=0
 MANAGE_HOSTS=1
 HOSTS_ENTRY_ADDED=0
 DRY_RUN=0
+JSON_MODE=0
+DOCTOR_MODE=0
+CONFIG_READ_ERROR=0
+STOP_ALL=0
+FRANKENPHP_PID=""
+FRANKENPHP_TOKEN=""
+STATE_FILE=""
+RUNTIME_TMP=""
 STOP_MODE=0
 QUIET=0
 MODE=""
@@ -117,7 +125,7 @@ open_browser() {
   elif command_exists start; then
     # Windows (Git Bash, WSL)
     start "$url" >/dev/null 2>&1 &
-  elif [ -n "$BROWSER" ]; then
+  elif [ -n "${BROWSER:-}" ]; then
     # Use BROWSER environment variable
     "$BROWSER" "$url" >/dev/null 2>&1 &
   elif command_exists firefox; then
@@ -151,8 +159,10 @@ PHP Configuration:
   --max-wait TIME       Max time to wait for free thread (default: 30s)
 
 Advanced Features:
-  --worker              Enable worker mode (experimental)
-  --watch               Enable file watcher for auto-reload
+  --worker              Enable a compatible FrankenPHP worker script
+  --no-worker           Disable worker mode (override config)
+  --watch               Watch a worker script (requires --worker)
+  --no-watch            Disable the worker watcher (override config)
   --watch-pattern PAT   Additional watch patterns (can use multiple times)
   --https MODE          HTTPS mode: off|local|on (default: off)
   --compression         Enable HTTP compression (default: on)
@@ -162,12 +172,14 @@ Advanced Features:
 
 Domain & Configuration:
   --domain DOMAIN       Custom local domain (e.g., myapp.test)
+  --no-domain           Clear the saved custom domain
   --auto-domain         Auto-detect domain from folder name
   --no-hosts            Skip /etc/hosts management
   --save                Save current settings to .phpup/config
 
 Development & Debug:
   --xdebug              Enable Xdebug step debugger (port 9003)
+  --no-xdebug           Disable the Xdebug override
   --verbose, -v         Verbose output and show FrankenPHP debug output
   --env-file FILE       Load environment variables from file
                         (also auto-loads .phpup/.env if it exists)
@@ -178,10 +190,13 @@ Other Options:
   --force               Overwrite existing config files (use with --init)
   --install             Install phpup to /usr/local/bin/ for system-wide use
   --build-php           Interactive helper to build custom FrankenPHP with additional extensions
-  --stop                Stop all running FrankenPHP processes and exit
-  --list                List running FrankenPHP instances for current user
+  --stop                Stop phpup servers for this project
+  --all                 With --stop, stop all servers managed by phpup
+  doctor, --doctor      Read-only project and runtime diagnostics
+  --json                With --list or doctor, return JSON
+  --list                List servers managed by phpup for current user
   --stats               Show detailed statistics (uptime, memory, threads) for running processes
-  --dry-run             Print the computed command and exit
+  --dry-run             Print the launch plan without changing files or system state
   --quiet               Reduce output
   -h, --help            Show this help
   --                    Pass remaining args to FrankenPHP
@@ -189,8 +204,8 @@ Other Options:
 Environment variables available to Caddyfile:
   HOST, PORT, DOCROOT, SERVER_NAME, SERVER_ROOT, PHP_THREADS, MAX_WAIT_TIME, WORKER_FILE, PHPUP_DIR
 
-  Generated Caddyfiles use these variables (e.g., {\$HOST}:{\$PORT}) so you can
-  override them with command-line options even after generation.
+  Custom Caddyfiles can use these variables (e.g., {\$HOST}:{\$PORT}).
+  Generated runtime Caddyfiles are refreshed from settings on each launch.
 
 Examples:
   # Initialize configuration files for customization
@@ -202,8 +217,8 @@ Examples:
   # Build custom FrankenPHP with Xdebug
   ./phpup --build-php
 
-  # Stop all running FrankenPHP processes
-  ./phpup --stop
+  # Stop all servers managed by phpup
+  ./phpup --stop --all
 
   # Basic usage
   ./phpup
@@ -212,7 +227,7 @@ Examples:
   ./phpup --open
 
   # Development with file watching
-  ./phpup --watch --verbose
+  ./phpup --worker --watch --verbose
 
   # Show FrankenPHP debug logs
   ./phpup --verbose
@@ -335,76 +350,49 @@ load_config() {
       ''|'#'*) continue ;;
     esac
 
-    # Remove leading/trailing whitespace
-    key=$(echo "$key" | xargs 2>/dev/null || echo "$key")
-    value=$(echo "$value" | xargs 2>/dev/null || echo "$value")
+    # Parse literal values; never source project configuration or use shell expansion.
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [ "${#value}" -ge 2 ] && [[ "$value" == \"*\" || "$value" == \'*\' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
 
-    # Only set if not already set by command-line args
+    # CLI arguments are parsed later; the last saved value wins.
     case "$key" in
-      HOST)
-        [ "$HOST" = "127.0.0.1" ] && HOST="$value"
-        debug "Loaded HOST=$value from config"
-        ;;
-      PORT)
-        [ "$START_PORT" = "8000" ] && START_PORT="$value"
-        debug "Loaded PORT=$value from config"
-        ;;
-      DOMAIN)
-        [ -z "$DOMAIN" ] && DOMAIN="$value"
-        debug "Loaded DOMAIN=$value from config"
-        ;;
-      HTTPS_MODE)
-        [ "$HTTPS_MODE" = "off" ] && HTTPS_MODE="$value"
-        ;;
-      WORKER_MODE)
-        [ "$WORKER_MODE" -eq 0 ] && WORKER_MODE="$value"
-        ;;
-      WATCH_MODE)
-        [ "$WATCH_MODE" -eq 0 ] && WATCH_MODE="$value"
-        ;;
-      COMPRESSION)
-        [ "$COMPRESSION" -eq 1 ] && COMPRESSION="$value"
-        ;;
-      PHP_THREADS)
-        [ "$PHP_THREADS" = "auto" ] && PHP_THREADS="$value"
-        ;;
-      DOCROOT)
-        [ -z "$DOCROOT" ] && DOCROOT="$value"
-        ;;
-      OPEN_BROWSER)
-        [ "$OPEN_BROWSER" -eq 0 ] && OPEN_BROWSER="$value"
-        ;;
-      XDEBUG)
-        [ "$XDEBUG" -eq 0 ] && XDEBUG="$value"
-        ;;
+      HOST) HOST="$value" ;;
+      PORT) [ -n "${PORT:-}" ] || START_PORT="$value" ;;
+      DOMAIN) DOMAIN="$value" ;;
+      HTTPS_MODE) HTTPS_MODE="$value" ;;
+      WORKER_MODE) WORKER_MODE="$value" ;;
+      WATCH_MODE) WATCH_MODE="$value" ;;
+      COMPRESSION) COMPRESSION="$value" ;;
+      MAX_WAIT_TIME) MAX_WAIT_TIME="$value" ;;
+      PHP_THREADS) PHP_THREADS="$value" ;;
+      DOCROOT) DOCROOT="$value" ;;
+      OPEN_BROWSER) OPEN_BROWSER="$value" ;;
+      XDEBUG) XDEBUG="$value" ;;
     esac
+    :
   done < "$CONFIG_FILE"
 }
 
 # Save configuration to .phpup/config
 save_config() {
   mkdir -p .phpup
-
-  log "💾 Saving configuration to $CONFIG_FILE"
-
-  cat > "$CONFIG_FILE" <<EOF
-# phpup configuration
-# This file is auto-generated. Edit manually if needed.
-# Command-line flags override these settings.
-
-DOMAIN=$DOMAIN
-HTTPS_MODE=$HTTPS_MODE
-WORKER_MODE=$WORKER_MODE
-WATCH_MODE=$WATCH_MODE
-COMPRESSION=$COMPRESSION
-PHP_THREADS=$PHP_THREADS
-DOCROOT=$DOCROOT
-OPEN_BROWSER=$OPEN_BROWSER
-XDEBUG=$XDEBUG
-EOF
-
-  chmod 600 "$CONFIG_FILE"
-  log "✅ Configuration saved"
+  local tmp
+  tmp=$(mktemp .phpup/config.XXXXXX) || return 1
+  {
+    printf '# phpup configuration\n# Command-line flags override these settings.\n'
+    printf '%s\n' "HOST=$HOST" "PORT=$START_PORT" "DOMAIN=$DOMAIN" \
+      "HTTPS_MODE=$HTTPS_MODE" "WORKER_MODE=$WORKER_MODE" "WATCH_MODE=$WATCH_MODE" \
+      "COMPRESSION=$COMPRESSION" "PHP_THREADS=$PHP_THREADS" "MAX_WAIT_TIME=$MAX_WAIT_TIME" \
+      "DOCROOT=$DOCROOT" "OPEN_BROWSER=$OPEN_BROWSER" "XDEBUG=$XDEBUG"
+  } > "$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$CONFIG_FILE"
+  log "Configuration saved: $CONFIG_FILE"
 }
 
 # Auto-detect domain from folder name
@@ -442,7 +430,7 @@ validate_domain() {
 check_mkcert() {
   if command_exists mkcert; then
     # Check if CA is installed
-    if mkcert -CAROOT >/dev/null 2>&1; then
+    if [ -f "$(mkcert -CAROOT 2>/dev/null)/rootCA.pem" ]; then
       return 0
     fi
   fi
@@ -471,13 +459,13 @@ setup_mkcert() {
   fi
 
   # Install local CA if not already installed
-  if ! mkcert -CAROOT >/dev/null 2>&1 || [ ! -d "$(mkcert -CAROOT)" ]; then
+  if [ ! -f "$(mkcert -CAROOT 2>/dev/null)/rootCA.pem" ]; then
     log "🔧 Installing local Certificate Authority..."
     if ! is_interactive; then
       log "   Elevating privileges for mkcert CA installation..."
-      elevate_cmd "mkcert -install"
+      elevate_cmd "mkcert -install" || return 1
     else
-      mkcert -install
+      mkcert -install || return 1
     fi
   fi
 
@@ -504,7 +492,7 @@ generate_cert() {
   # Use subshell to avoid changing working directory of the main script
   (
     cd .phpup/certs || exit 1
-    mkcert "$domain" "*.${domain}" >/dev/null 2>&1
+    mkcert "$domain" "*.${domain}" >/dev/null 2>&1 || exit 1
 
     # mkcert creates files with specific names, rename them for consistency
     if [ -f "${domain}+1.pem" ]; then
@@ -527,7 +515,8 @@ manage_hosts_entry() {
   local domain="$2"
   local ip="${3:-127.0.0.1}"
 
-  local hosts_file="/etc/hosts"
+  # Optional path is used by the isolated hosts lifecycle tests.
+  local hosts_file="${4:-/etc/hosts}"
   local marker="# phpup-managed"
 
   # Check if we need sudo
@@ -540,7 +529,7 @@ manage_hosts_entry() {
 
   if [ "$action" = "add" ]; then
     # Check if entry already exists (use -F for literal string matching)
-    if grep -Fq "$ip $domain" "$hosts_file" 2>/dev/null; then
+    if awk -v ip="$ip" -v domain="$domain" '$1 == ip {for (i=2;i<=NF && $i !~ /^#/;i++) if ($i == domain) found=1} END {exit !found}' "$hosts_file"; then
       debug "Domain $domain already in $hosts_file"
       return 0
     fi
@@ -550,11 +539,12 @@ manage_hosts_entry() {
 
     # Add entry with marker
     if [ -w "$hosts_file" ]; then
-      echo "$ip $domain $marker" >> "$hosts_file"
+      echo "$ip $domain $marker" >> "$hosts_file" || return 1
     else
-      elevate_cmd "echo '$ip $domain $marker' >> '$hosts_file'" >/dev/null
+      elevate_cmd "echo '$ip $domain $marker' >> '$hosts_file'" >/dev/null || return 1
     fi
 
+    HOSTS_ENTRY_ADDED=1
     log "✅ Added $domain → $ip to hosts file"
 
   elif [ "$action" = "remove" ]; then
@@ -564,9 +554,9 @@ manage_hosts_entry() {
       # Escape dots in domain for safe use in sed regex
       local escaped_domain="${domain//./\\.}"
       if [ -w "$hosts_file" ]; then
-        sed -i.backup "/${escaped_domain}.*${marker}/d" "$hosts_file"
+        sed -i.backup "/^127\\.0\\.0\\.1 ${escaped_domain} ${marker}$/d" "$hosts_file"
       else
-        elevate_cmd "sed -i.backup '/${escaped_domain}.*${marker}/d' '$hosts_file'"
+        elevate_cmd "sed -i.backup '/^127\\.0\\.0\\.1 ${escaped_domain} ${marker}$/d' '$hosts_file'"
       fi
 
       log "✅ Removed $domain from hosts file"
@@ -612,6 +602,7 @@ find_free_port() {
   local host="$1" start="$2" max_increments=2000
   local p="$start"
   for _ in $(seq 0 "$max_increments"); do
+    [ "$p" -le 65535 ] || break
     if is_port_free "$host" "$p"; then
       echo "$p"
       return 0
@@ -643,23 +634,13 @@ validate_port() {
 }
 
 validate_file_path() {
-  local path="$1"
-  local must_exist="$2"
-
-  # Prevent path traversal and dangerous paths
-  case "$path" in
-    */..* | */../* | ../* | */./* | /etc/* | /usr/* | /bin/* | /sbin/* | /var/* | /sys/* | /proc/*)
-      return 1 ;;
-  esac
-
-  # Must be absolute or relative to current directory
-  if [[ "$path" =~ ^[a-zA-Z0-9/_.-]+$ ]]; then
-    if [ "$must_exist" = "true" ] && [ ! -f "$path" ]; then
-      return 1
-    fi
-    return 0
-  fi
-  return 1
+  local path="$1" must_exist="$2"
+  # Keep Caddy placeholders and line-oriented configuration unambiguous.
+  # Ordinary spaces, Unicode and apostrophes are valid filesystem names.
+  [[ -n "$path" && ! "$path" =~ [[:cntrl:]] && "$path" != *'{'* && "$path" != *'}'* ]] || return 1
+  case "/$path/" in */../*) return 1 ;; esac
+  case "$path" in /etc/*|/usr/*|/bin/*|/sbin/*|/var/*|/sys/*|/proc/*) return 1 ;; esac
+  [ "$must_exist" != "true" ] || [ -f "$path" ]
 }
 
 validate_threads() {
@@ -683,13 +664,13 @@ validate_time() {
 }
 
 # Load configuration before parsing arguments (CLI args will override config)
-load_config
+load_config || CONFIG_READ_ERROR=1
 
 # Parse args with validation
 while [ $# -gt 0 ]; do
   case "$1" in
     --host)
-      if [ -z "$2" ]; then
+      if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
         err "--host requires a value"; exit 2
       fi
       if ! validate_host "$2"; then
@@ -697,7 +678,7 @@ while [ $# -gt 0 ]; do
       fi
       HOST="$2"; shift 2;;
     --port|--start-port)
-      if [ -z "$2" ]; then
+      if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
         err "--port requires a value"; exit 2
       fi
       if ! validate_port "$2"; then
@@ -705,7 +686,7 @@ while [ $# -gt 0 ]; do
       fi
       START_PORT="$2"; shift 2;;
     --caddyfile)
-      if [ -z "$2" ]; then
+      if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
         err "--caddyfile requires a value"; exit 2
       fi
       if ! validate_file_path "$2" "false"; then
@@ -713,7 +694,7 @@ while [ $# -gt 0 ]; do
       fi
       CADDYFILE="$2"; shift 2;;
     --docroot)
-      if [ -z "$2" ]; then
+      if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
         err "--docroot requires a value"; exit 2
       fi
       if ! validate_file_path "$2" "false"; then
@@ -721,7 +702,7 @@ while [ $# -gt 0 ]; do
       fi
       DOCROOT="$2"; shift 2;;
     --php-threads)
-      if [ -z "$2" ]; then
+      if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
         err "--php-threads requires a value"; exit 2
       fi
       if ! validate_threads "$2"; then
@@ -729,7 +710,7 @@ while [ $# -gt 0 ]; do
       fi
       PHP_THREADS="$2"; shift 2;;
     --max-wait)
-      if [ -z "$2" ]; then
+      if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
         err "--max-wait requires a value"; exit 2
       fi
       if ! validate_time "$2"; then
@@ -738,10 +719,18 @@ while [ $# -gt 0 ]; do
       MAX_WAIT_TIME="$2"; shift 2;;
     --worker)
       WORKER_MODE=1; shift;;
+    --no-domain)
+      DOMAIN=""; shift;;
+    --no-worker)
+      WORKER_MODE=0; shift;;
+    --no-watch)
+      WATCH_MODE=0; shift;;
+    --no-xdebug)
+      XDEBUG=0; shift;;
     --watch)
       WATCH_MODE=1; shift;;
     --watch-pattern)
-      if [ -z "$2" ]; then
+      if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
         err "--watch-pattern requires a value"; exit 2
       fi
       # Basic validation for watch patterns
@@ -752,7 +741,7 @@ while [ $# -gt 0 ]; do
       fi
       shift 2;;
     --https)
-      if [ -z "$2" ]; then
+      if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
         err "--https requires a value"; exit 2
       fi
       if [ "$2" != "off" ] && [ "$2" != "local" ] && [ "$2" != "on" ]; then
@@ -772,7 +761,7 @@ while [ $# -gt 0 ]; do
     --verbose|-v)
       VERBOSE=1; shift;;
     --env-file)
-      if [ -z "$2" ]; then
+      if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
         err "--env-file requires a value"; exit 2
       fi
       if ! validate_file_path "$2" "false"; then
@@ -780,7 +769,7 @@ while [ $# -gt 0 ]; do
       fi
       ENV_FILE="$2"; shift 2;;
     --domain)
-      if [ -z "$2" ]; then
+      if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
         err "--domain requires a value"; exit 2
       fi
       # Convert to lowercase for consistency
@@ -805,6 +794,12 @@ while [ $# -gt 0 ]; do
       BUILD_PHP_MODE=1; shift;;
     --stop)
       STOP_MODE=1; shift;;
+    --all)
+      STOP_ALL=1; shift;;
+    doctor|--doctor)
+      DOCTOR_MODE=1; shift;;
+    --json)
+      JSON_MODE=1; shift;;
     --list)
       LIST_MODE=1; shift;;
     --stats)
@@ -830,6 +825,17 @@ while [ $# -gt 0 ]; do
       err "Unknown option: $1"; usage; exit 2;;
   esac
 done
+
+# Modifier flags must never accidentally start a server or mutate during preview.
+if [ "$STOP_ALL" -eq 1 ] && [ "$STOP_MODE" -eq 0 ]; then err "--all requires --stop"; exit 2; fi
+if [ "$JSON_MODE" -eq 1 ] && [ "$LIST_MODE" -eq 0 ] && [ "$DOCTOR_MODE" -eq 0 ]; then err "--json requires --list or doctor"; exit 2; fi
+if [ "$DOCTOR_MODE" -eq 1 ] && (( STOP_MODE || LIST_MODE || INIT_MODE || SAVE_MODE || INSTALL_MODE || BUILD_PHP_MODE || STATS_MODE || DRY_RUN || FORCE_MODE )); then
+  err "doctor cannot be combined with another action (init, save, install, build, stop, list, stats, force or dry-run)"; exit 2
+fi
+if [ "$CONFIG_READ_ERROR" -eq 1 ] && [ "$DOCTOR_MODE" -eq 0 ]; then err "Cannot read $CONFIG_FILE"; exit 2; fi
+if [ "$DRY_RUN" -eq 1 ] && { [ "$STOP_MODE" -eq 1 ] || [ "$INSTALL_MODE" -eq 1 ] || [ "$BUILD_PHP_MODE" -eq 1 ]; }; then
+  err "--dry-run cannot be combined with --stop, --install or --build-php"; exit 2
+fi
 
 # Handle auto-domain detection
 if [ "$AUTO_DOMAIN" -eq 1 ] && [ -z "$DOMAIN" ]; then
@@ -1080,83 +1086,342 @@ stats_instances() {
   done
 }
 
-# Handle stop mode - kill all FrankenPHP processes
-if [ "$STOP_MODE" -eq 1 ]; then
-  log "🛑 Stopping all FrankenPHP processes..."
-
-  # Find FrankenPHP processes owned by current user only (security improvement)
-  # Use pattern that matches FrankenPHP commands - simplified for compatibility
-  PIDS=$(pgrep -f "frankenphp" -u "$(id -u)" 2>/dev/null || true)
-
-  if [ -z "$PIDS" ]; then
-    log "ℹ️  No FrankenPHP processes found for current user."
-    exit 0
+# Only processes started by phpup are eligible for management. A start token
+# prevents a stale PID file from targeting an unrelated process after PID reuse.
+process_token() {
+  if [ -r "/proc/$1/stat" ]; then
+    awk '{sub(/^.*\) /, ""); if ($1 != "Z") print "linux:" $20}' "/proc/$1/stat" 2>/dev/null
+    return
   fi
+  ps -p "$1" -o lstart= 2>/dev/null | sed 's/^[[:space:]]*//'
+}
 
-  # Validate PIDs and check ownership before killing
-  VALID_PIDS=""
-  for pid in $PIDS; do
-    if is_own_process "$pid"; then
-      VALID_PIDS="${VALID_PIDS} $pid"
-    fi
+registry_dir() {
+  printf '%s/phpup-%s' "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}" "$(id -u)"
+}
+
+json_string() {
+  local value="$1" char escaped i
+  value="${value//\\/\\\\}"; value="${value//\"/\\\"}"
+  for ((i=1; i<32; i++)); do
+    printf -v char '%b' "\\$(printf '%03o' "$i")"
+    printf -v escaped '\\u%04x' "$i"
+    value="${value//"$char"/"$escaped"}"
   done
+  printf '"%s"' "$value"
+}
 
-  if [ -z "$VALID_PIDS" ]; then
-    log "ℹ️  No valid FrankenPHP processes found for current user."
-    exit 0
-  fi
+APP_ENV=()
+load_app_env() {
+  local file="$1" line key value
+  [ -f "$file" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*= ]] || continue
+    key="${line%%=*}"; value="${line#*=}"
+    if [ "${#value}" -ge 2 ] && [[ "$value" == \"*\" || "$value" == \'*\' ]]; then value="${value:1:${#value}-2}"; fi
+    APP_ENV+=("$key=$value")
+  done < "$file"
+}
 
-  # Count valid processes
-  PROCESS_COUNT=$(echo "$VALID_PIDS" | wc -w)
-  log "🔍 Found $PROCESS_COUNT valid FrankenPHP process(es). Sending SIGTERM..."
+# Diagnostics collect evidence only: no provisioning, config writes or app scripts.
+doctor_add() {
+  local id="$1" status="$2" title="$3" message="$4" fix="${5:-}" row
+  row=$(printf '{"id":'; json_string "$id"; printf ',"status":'; json_string "$status";
+    printf ',"title":'; json_string "$title"; printf ',"message":'; json_string "$message";
+    printf ',"fix":'; if [ -n "$fix" ]; then json_string "$fix"; else printf null; fi; printf '}')
+  doctor_record "$status" "$row" "$title" "$message" "$fix"
+}
 
-  # Send SIGTERM to valid processes only
-  for pid in $VALID_PIDS; do
-    if kill -0 "$pid" 2>/dev/null; then
-      kill -TERM "$pid" 2>/dev/null || log "⚠️  Could not send SIGTERM to PID $pid"
-    fi
-  done
+doctor_record() {
+  local status="$1" row="$2"
+  case "$status" in
+    error) DOCTOR_ERRORS=$((DOCTOR_ERRORS + 1)) ;;
+    warning) DOCTOR_WARNINGS=$((DOCTOR_WARNINGS + 1)) ;;
+    pass) DOCTOR_PASSES=$((DOCTOR_PASSES + 1)) ;;
+    *) return 1 ;;
+  esac
+  DOCTOR_ROWS+=("$row")
+  DOCTOR_TEXT+=("[$status] ${3:-}: ${4:-}")
+  [ -z "${5:-}" ] || DOCTOR_TEXT+=("  Fix: $5")
+  return 0
+}
 
-  # Wait for graceful shutdown
-  sleep 3
-
-  # Check if any processes are still running and force kill if needed
-  REMAINING_PIDS=""
-  for pid in $VALID_PIDS; do
-    if kill -0 "$pid" 2>/dev/null; then
-      REMAINING_PIDS="${REMAINING_PIDS} $pid"
-    fi
-  done
-
-  if [ -n "$REMAINING_PIDS" ]; then
-    REMAINING_COUNT=$(echo "$REMAINING_PIDS" | wc -w)
-    log "💥 Force killing $REMAINING_COUNT stubborn process(es) with SIGKILL..."
-    for pid in $REMAINING_PIDS; do
-      kill -KILL "$pid" 2>/dev/null || log "⚠️  Could not send SIGKILL to PID $pid"
-    done
-    sleep 1
-  fi
-
-  # Final verification
-  STILL_RUNNING=""
-  for pid in $VALID_PIDS; do
-    if kill -0 "$pid" 2>/dev/null; then
-      STILL_RUNNING="${STILL_RUNNING} $pid"
-    fi
-  done
-
-  if [ -z "$STILL_RUNNING" ]; then
-    log "✅ All FrankenPHP processes have been stopped."
+run_doctor() {
+  local DOCTOR_ERRORS=0 DOCTOR_WARNINGS=0 DOCTOR_PASSES=0
+  local -a DOCTOR_ROWS=() DOCTOR_TEXT=() probe_env=() probe_timeout=()
+  local project dir scan scan_set startup="" runtime_bin="" runtime_ok=0 config_ok=1 key value file output status row title message fix first=1 ca cert certkey public_cert public_key
+  project=$(pwd -P)
+  command_exists timeout && probe_timeout=("$(command -v timeout)" 15s)
+  if [ "$CONFIG_READ_ERROR" -eq 1 ]; then
+    doctor_add config error 'Saved settings' "Cannot read $CONFIG_FILE" 'Restore read access to .phpup/config.'
+    config_ok=0
   else
-    log "⚠️  Some processes are still running (PIDs:$STILL_RUNNING). Manual intervention may be required."
+    for key in HOST START_PORT PHP_THREADS MAX_WAIT_TIME DOMAIN HTTPS_MODE WORKER_MODE WATCH_MODE COMPRESSION OPEN_BROWSER XDEBUG; do
+      value="${!key}"
+      case "$key" in
+        HOST) validate_host "$value" ;;
+        START_PORT) validate_port "$value" ;;
+        PHP_THREADS) validate_threads "$value" ;;
+        MAX_WAIT_TIME) validate_time "$value" ;;
+        DOMAIN) [ -z "$value" ] || validate_domain "$value" ;;
+        HTTPS_MODE) [[ "$value" = off || "$value" = local || "$value" = on ]] ;;
+        *) [[ "$value" = 0 || "$value" = 1 ]] ;;
+      esac && continue
+      doctor_add "config.$key" error 'Saved settings' "Invalid $key: $value" 'Correct .phpup/config or override this setting on the command line.'
+      config_ok=0
+    done
+    if [ "$WATCH_MODE" = 1 ] && [ "$WORKER_MODE" != 1 ]; then
+      doctor_add config.watch error 'Worker watch' 'Watching requires worker mode.' 'Enable worker mode with a compatible worker script, or disable watching.'
+      config_ok=0
+    fi
+    if [ "$config_ok" = 1 ]; then
+      if [ -f "$CONFIG_FILE" ]; then doctor_add config pass 'Saved settings' 'Saved settings are valid.';
+      else doctor_add config pass 'Settings' 'Using defaults; no saved configuration.'; fi
+    fi
   fi
+  if [ -z "$DOCROOT" ]; then
+    for dir in public web www .; do [ ! -d "$dir" ] || { DOCROOT="$dir"; break; }; done
+  fi
+  if validate_file_path "$DOCROOT" false && [ -d "$DOCROOT" ] && [ -r "$DOCROOT" ] && [ -x "$DOCROOT" ]; then
+    DOCROOT=$(cd "$DOCROOT" && pwd -P)
+    doctor_add docroot pass 'Document root' "$DOCROOT"
+  else doctor_add docroot error 'Document root' "Directory is missing, unreadable or invalid: $DOCROOT" 'Set DOCROOT to an existing readable directory in .phpup/config.'; fi
+  if [ "$WORKER_MODE" = 1 ] && [ ! -r "$DOCROOT/index.php" ] && [ ! -r "$DOCROOT/app.php" ]; then
+    doctor_add worker error 'Worker script' 'Neither index.php nor app.php is readable in the document root.' 'Set the document root to the directory containing your worker entry point.'
+  fi
+  dir="$project/.phpup"
+  [ -e "$dir" ] || dir="$project"
+  if [ -d "$dir" ] && [ -w "$dir" ] && [ -x "$dir" ]; then doctor_add storage pass 'Project storage' "$dir is writable.";
+  else doctor_add storage error 'Project storage' "Cannot write runtime files in $dir" 'Restore write and directory access for your user.'; fi
+  dir=$(registry_dir)
+  if [ -L "$dir" ] || { [ -e "$dir" ] && { [ ! -d "$dir" ] || [ ! -w "$dir" ] || [ "$(get_file_owner_uid "$dir")" != "$(id -u)" ]; }; }; then
+    doctor_add registry error 'Process registry' "Unsafe or inaccessible registry: $dir" 'Use a private, writable XDG_RUNTIME_DIR owned by your user.'
+  elif [ ! -e "$dir" ] && [ ! -w "$(dirname "$dir")" ]; then
+    doctor_add registry error 'Process registry' "Registry parent is not writable: $(dirname "$dir")" 'Set XDG_RUNTIME_DIR to an existing writable directory.'
+  else doctor_add registry pass 'Process registry' "$dir is available."; fi
+  if command_exists curl; then doctor_add curl pass 'HTTP readiness' 'curl is available.';
+  else doctor_add curl error 'HTTP readiness' 'curl is missing; server readiness cannot be checked.' 'Install curl with your system package manager.'; fi
+  if validate_port "$START_PORT"; then
+    if command_exists ss || command_exists lsof || command_exists nc; then
+      if is_port_free "$HOST" "$START_PORT"; then doctor_add port pass 'Requested port' "Port $START_PORT is available.";
+      else doctor_add port warning 'Requested port' "Port $START_PORT is occupied. A new launch will choose the next available port." 'Stop the existing server or choose another port if you need a fixed URL.'; fi
+    else doctor_add port warning 'Requested port' 'No supported listener inspection tool is available.' 'Install ss (iproute), lsof or nc to inspect occupied ports.'; fi
+  fi
+  local -a APP_ENV=()
+  for file in "$project/.phpup/.env" "$ENV_FILE"; do
+    [ -n "$file" ] || continue
+    if { [ -e "$file" ] || [ "$file" = "$ENV_FILE" ]; } && [ ! -r "$file" ]; then
+      doctor_add "env.$file" error 'Application environment' "Cannot read $file" 'Restore read access or correct --env-file.'
+    else load_app_env "$file"; fi
+  done
+  probe_env=("${APP_ENV[@]}" "PHPUP_DIR=$project/.phpup" "PHPUP_DOCTOR_XDEBUG=$XDEBUG")
+  scan="${PHP_INI_SCAN_DIR-}"
+  scan_set="${PHP_INI_SCAN_DIR+x}"
+  if [ -f "$project/.phpup/php.ini" ]; then
+    if [ "${PHP_INI_SCAN_DIR+x}" = x ] && [ -z "$scan" ]; then scan="$project/.phpup"; else scan="$scan:$project/.phpup"; fi
+    scan_set=x
+  else
+    for value in "${APP_ENV[@]}"; do
+      case "$value" in PHP_INI_SCAN_DIR=*) scan="${value#*=}"; scan_set=x ;; esac
+    done
+  fi
+  if command_exists frankenphp && DOCTOR_TMP=$(mktemp -d "${TMPDIR:-/tmp}/phpup-doctor-ini.XXXXXX"); then
+    # php-cli before PHP 8.6 cannot accept -d. A final temporary INI prevents
+    # startup diagnostics from writing to the project-configured error log.
+    printf 'log_errors=Off\ndisplay_errors=stderr\ndisplay_startup_errors=On\n' > "$DOCTOR_TMP/phpup-doctor.ini"
+    if [ "$scan_set" = x ] && [ -z "$scan" ]; then scan="$DOCTOR_TMP"; else scan="$scan:$DOCTOR_TMP"; fi
+    probe_env+=("PHP_INI_SCAN_DIR=$scan" "PHPUP_DOCTOR_INI=$DOCTOR_TMP/phpup-doctor.ini")
+    runtime_bin=$(command -v frankenphp)
+    if output=$(env "${probe_env[@]}" "${probe_timeout[@]}" "$runtime_bin" php-cli -r '
+function report($id, $status, $title, $message, $fix = null) {
+    echo $status, "\t", json_encode(compact("id", "status", "title", "message", "fix"), JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES), "\t", str_replace("\0", "\t", str_replace(["\n", "\r", "\t"], " ", $title . "\0" . $message . "\0" . ($fix ?? ""))), "\n";
+}
+if (getenv("PHPUP_DOCTOR_XDEBUG") === "1" && !extension_loaded("xdebug")) report("xdebug", "error", "Xdebug", "Xdebug is enabled in settings but is not loaded in FrankenPHP.", "Install a FrankenPHP build containing Xdebug or disable XDEBUG in .phpup/config.");
+report("runtime", "pass", "FrankenPHP runtime", "PHP " . PHP_VERSION . " · " . count(get_loaded_extensions()) . " extensions loaded.");
+$ini = implode(", ", array_filter(array_map("trim", explode(",", php_ini_scanned_files() ?: "")), fn($f) => $f !== getenv("PHPUP_DOCTOR_INI")));
+$main = php_ini_loaded_file() ?: "none";
+report("ini", "pass", "PHP configuration", "Main: " . $main . "; scanned: " . (trim($ini) ?: "none"));
+$requirements = [];
+if (is_file("composer.json")) {
+    try {
+        $manifest = json_decode(file_get_contents("composer.json"), true, 512, JSON_THROW_ON_ERROR);
+        if (!is_array($manifest)) throw new Exception("Expected an object");
+        report("composer.manifest", "pass", "Composer manifest", "composer.json is valid JSON.");
+        foreach (["require", "require-dev"] as $section) {
+            if (isset($manifest[$section]) && !is_array($manifest[$section])) throw new Exception("Invalid " . $section);
+            $requirements += $manifest[$section] ?? [];
+        }
+        $vendor = $manifest["config"]["vendor-dir"] ?? "vendor";
+        if (!is_string($vendor) || $vendor === "" || preg_match("/[\x00-\x1f]/", $vendor)) throw new Exception("Invalid vendor-dir");
+        $installed = is_readable($vendor . "/autoload.php");
+        report("composer.vendor", $installed ? "pass" : "warning", "Composer dependencies", $installed ? "Autoloader found in " . $vendor : "Missing " . $vendor . "/autoload.php", $installed ? null : "Run composer install in this project.");
+    } catch (Throwable $error) {
+        report("composer.manifest.invalid", "error", "Composer manifest", $error->getMessage(), "Correct composer.json before installing dependencies.");
+    }
+}
+if (is_file("composer.lock")) {
+    try {
+        $lock = json_decode(file_get_contents("composer.lock"), true, 512, JSON_THROW_ON_ERROR);
+        if (!is_array($lock)) throw new Exception("Expected an object");
+        foreach (["packages", "packages-dev"] as $section) {
+            foreach ($lock[$section] ?? [] as $package) $requirements += $package["require"] ?? [];
+        }
+        foreach (["platform", "platform-dev"] as $section) $requirements += $lock[$section] ?? [];
+    } catch (Throwable $error) {
+        report("composer.lock", "error", "Composer lock", "Cannot read locked requirements: " . $error->getMessage(), "Restore or regenerate composer.lock with Composer.");
+    }
+}
+$missing = [];
+foreach (array_keys($requirements) as $name) {
+    if (str_starts_with($name, "ext-") && !extension_loaded(str_replace("-", "_", substr($name, 4)))) $missing[] = $name;
+}
+if ($missing) report("extensions", "error", "Required PHP extensions", "Missing: " . implode(", ", $missing), "Install or build FrankenPHP with these extensions, then check again.");
+elseif ($requirements) report("extensions", "pass", "Required PHP extensions", "All declared extension names are loaded. Version constraints are not evaluated.");
+if (isset($requirements["php"])) report("php.constraint", "warning", "PHP version constraints", "Runtime is " . PHP_VERSION . "; declared PHP requirement: " . (string)$requirements["php"] . ". Full version constraints are not evaluated.", "Run composer check-platform-reqs using this FrankenPHP runtime after installing dependencies.");
+' 2>&1); then
+      runtime_ok=1
+      while IFS=$'\t' read -r status row title message fix; do
+        case "$status" in
+          pass|warning|error) doctor_record "$status" "$row" "$title" "$message" "$fix" ;;
+          '') ;;
+          *) startup+="$status $row " ;;
+        esac
+      done <<< "$output"
+      if [ -n "$startup" ]; then doctor_add runtime.startup warning 'PHP startup messages' "${startup:0:1200}" 'Review the PHP configuration and loaded extensions.'; fi
+    else doctor_add runtime error 'FrankenPHP runtime' 'PHP inspection failed or timed out.' 'Run frankenphp php-cli -r '\''echo PHP_VERSION;'\'' and check .phpup/php.ini for startup errors.'; fi
+  elif command_exists frankenphp; then doctor_add runtime error 'FrankenPHP runtime' 'Cannot create temporary diagnostic configuration.' 'Set TMPDIR to an existing writable directory.'
+  else doctor_add runtime error 'FrankenPHP runtime' 'frankenphp is missing from PATH.' 'Run phpup --install or install FrankenPHP, then reopen your terminal.'; fi
+  if [ -f composer.json ]; then
+    if command_exists composer || { [ "$runtime_ok" = 1 ] && [ -r "$HOME/.local/bin/composer.phar" ]; }; then
+      doctor_add composer pass Composer 'Composer is available.'
+    else doctor_add composer warning Composer 'Composer is missing.' 'Install Composer from getcomposer.org or the desktop Tools panel.'; fi
+  fi
+  if [ -f package.json ] && [ ! -d node_modules ]; then
+    doctor_add node.dependencies warning 'Frontend dependencies' 'package.json exists but node_modules is missing.' 'Install dependencies with the package manager matching this project’s lockfile.'
+  fi
+  if [ -z "$CADDYFILE" ]; then
+    for file in .phpup/Caddyfile Caddyfile.local Caddyfile.dev Caddyfile caddy/Caddyfile config/Caddyfile .Caddyfile; do
+      [ ! -f "$file" ] || { CADDYFILE="$file"; break; }
+    done
+  fi
+  if [ -n "$CADDYFILE" ]; then
+    doctor_add caddy.custom warning 'Custom Caddyfile' "$CADDYFILE controls listeners and PHP options; saved settings may be overridden." 'Review this file when the server differs from saved settings.'
+    if [ "$runtime_ok" = 1 ] && [ "$config_ok" = 1 ]; then
+      local protocol=http site="${DOMAIN:-$HOST}" worker="$DOCROOT/index.php"
+      [ "$HTTPS_MODE" = off ] || protocol=https
+      [ "$site" != ::1 ] || site='[::1]'
+      [ ! -f "$DOCROOT/app.php" ] || worker="$DOCROOT/app.php"
+      if output=$(env "${probe_env[@]}" "HOST=$site" "PORT=$START_PORT" "DOCROOT=$DOCROOT" "PROTOCOL=$protocol" "SERVER_NAME=$site:$START_PORT" "SERVER_ROOT=$DOCROOT" "DOCUMENT_ROOT=$DOCROOT" "WORKER_FILE=$worker" "PHP_THREADS=$PHP_THREADS" "MAX_WAIT_TIME=$MAX_WAIT_TIME" "${probe_timeout[@]}" "$runtime_bin" adapt --adapter caddyfile --config "$CADDYFILE" 2>&1 >/dev/null); then
+        doctor_add caddy.syntax pass 'Caddyfile syntax' 'Adapted successfully. Runtime provisioning is checked when starting.'
+      else doctor_add caddy.syntax error 'Caddyfile syntax' "${output:0:1200}" 'Fix the custom Caddyfile and check again.'; fi
+    fi
+  fi
+  if [ -n "$DOMAIN" ] && validate_domain "$DOMAIN"; then
+    if awk -v domain="$DOMAIN" '$1 == "127.0.0.1" || $1 == "::1" {for (i=2;i<=NF && $i !~ /^#/;i++) if ($i == domain) found=1} END {exit !found}' /etc/hosts; then
+      doctor_add hosts pass 'Local hostname' "$DOMAIN has a loopback entry in /etc/hosts."
+    else doctor_add hosts warning 'Local hostname' "No loopback hosts entry for $DOMAIN. DNS was not checked." 'Add a loopback hosts entry or configure local DNS; starting with hosts management may request permission.'; fi
+  fi
+  if [ "$HTTPS_MODE" = local ]; then
+    if [ -z "$DOMAIN" ]; then doctor_add tls.domain warning 'Local HTTPS' 'Without a custom domain, Caddy manages the local certificate. Trust has not been verified.' 'For mkcert-managed HTTPS, set DOMAIN to a local name such as myapp.test.';
+    elif validate_domain "$DOMAIN"; then
+      if command_exists mkcert; then
+        doctor_add mkcert pass 'Local certificate tool' 'mkcert is available.'
+        ca=$(mkcert -CAROOT 2>/dev/null || true)
+        if [ -r "$ca/rootCA.pem" ]; then
+          doctor_add tls.ca warning 'Local certificate authority' 'A local CA exists. Browser and system trust have not been verified.' 'If your browser rejects HTTPS, run mkcert -install as your normal user and restart the browser.'
+        else doctor_add tls.ca warning 'Local certificate authority' 'No readable local CA certificate was found.' 'Run mkcert -install as your normal user to create and trust a local CA.'; fi
+      else doctor_add mkcert error 'Local certificate tool' 'mkcert is missing; local HTTPS cannot generate certificates.' 'Install mkcert, then run mkcert -install as your normal user.'; fi
+      cert="$project/.phpup/certs/$DOMAIN.pem"; certkey="$project/.phpup/certs/$DOMAIN-key.pem"
+      if [ ! -f "$cert" ] || [ ! -f "$certkey" ]; then
+        doctor_add tls.cert warning 'Project certificate' 'A certificate and key have not been generated yet.' 'Start the project after configuring mkcert to generate its certificate.'
+      elif command_exists openssl; then
+        public_cert=$(openssl x509 -in "$cert" -pubkey -noout 2>/dev/null || true)
+        public_key=$(openssl pkey -in "$certkey" -pubout -passin pass: 2>/dev/null || true)
+        if [ -n "$public_cert" ] && [ "$public_cert" = "$public_key" ] && openssl x509 -in "$cert" -checkend 0 -noout >/dev/null 2>&1 && openssl x509 -in "$cert" -checkhost "$DOMAIN" -noout >/dev/null 2>&1; then
+          doctor_add tls.cert pass 'Project certificate' 'Certificate is unexpired, matches the domain and matches its private key.'
+        else doctor_add tls.cert error 'Project certificate' 'Certificate is expired, invalid, for another hostname, or does not match the key.' 'Back up and remove this project’s certificate and key, then restart to regenerate them.'; fi
+      else doctor_add tls.cert warning 'Project certificate' 'Certificate files exist; openssl is unavailable to inspect them.' 'Install openssl to check expiry, hostname and key pairing.'; fi
+    fi
+  fi
+  if [ "$JSON_MODE" = 1 ]; then
+    printf '{"schemaVersion":1,"project":'; json_string "$project"
+    printf ',"ok":'; if [ "$DOCTOR_ERRORS" = 0 ]; then printf true; else printf false; fi
+    printf ',"summary":{"errors":%s,"warnings":%s,"passes":%s},"checks":[' "$DOCTOR_ERRORS" "$DOCTOR_WARNINGS" "$DOCTOR_PASSES"
+    for row in "${DOCTOR_ROWS[@]}"; do [ "$first" = 1 ] || printf ','; first=0; printf '%s' "$row"; done
+    printf ']}\n'
+  else
+    printf 'PHPUp doctor — %s\n' "$project"
+    # Render the same rows without requiring PHP, jq or Python to be installed.
+    printf '%s errors, %s warnings, %s passed\n' "$DOCTOR_ERRORS" "$DOCTOR_WARNINGS" "$DOCTOR_PASSES"
+    printf '%s\n' "${DOCTOR_TEXT[@]}"
+  fi
+  [ "$DOCTOR_ERRORS" = 0 ]
+}
 
-  exit 0
+if [ "$DOCTOR_MODE" -eq 1 ]; then
+  DOCTOR_TMP=""
+  trap '[ -z "$DOCTOR_TMP" ] || rm -rf -- "$DOCTOR_TMP"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  run_doctor && exit 0
+  exit 1
 fi
 
-# Handle list mode
+managed_instances() {
+  local dir file pid token path port url child child_token current first=1 failed=0 i attempt
+  local -a stopped_pids=() stopped_tokens=()
+  dir=$(registry_dir)
+  if [ "$STOP_MODE" -eq 0 ]; then
+    if [ "$JSON_MODE" -eq 1 ]; then printf '['; else printf 'PID     PORT    STARTED FROM\n'; fi
+  fi
+  if [ -d "$dir" ] && [ ! -L "$dir" ] && [ "$(get_file_owner_uid "$dir")" = "$(id -u)" ]; then
+    for file in "$dir"/*.state; do
+      [ -f "$file" ] && [ ! -L "$file" ] || continue
+      { IFS= read -r pid; IFS= read -r token; IFS= read -r path; IFS= read -r port; IFS= read -r url; IFS= read -r child; IFS= read -r child_token; } < "$file" || continue
+      [[ "$pid" =~ ^[0-9]+$ && "$child" =~ ^[0-9]+$ ]] || continue
+      is_own_process "$pid" && is_own_process "$child" || continue
+      current=$(process_token "$pid") || continue
+      [ -n "$current" ] && [ "$current" = "$token" ] && [ "$(process_token "$child")" = "$child_token" ] || continue
+      if [ "$STOP_MODE" -eq 1 ]; then
+        if [ "$STOP_ALL" -eq 1 ] || [ "$path" = "$(pwd -P)" ]; then
+          if kill -TERM "$pid" 2>/dev/null; then
+            stopped_pids+=("$pid"); stopped_tokens+=("$token")
+          elif [ "$(process_token "$pid")" = "$token" ]; then
+            err "Could not stop managed server $pid"; failed=1
+          fi
+        fi
+      elif [ "$JSON_MODE" -eq 1 ]; then
+        [ "$first" -eq 1 ] || printf ','; first=0
+        printf '{"pid":'; json_string "$pid"
+        printf ',"path":'; json_string "$path"
+        printf ',"port":'; json_string "$port"
+        printf ',"url":'; json_string "$url"
+        printf '}'
+      else
+        printf '%-7s %-7s %s\n' "$pid" "$port" "$path"
+      fi
+    done
+  fi
+  if [ "$STOP_MODE" -eq 1 ]; then
+    for i in "${!stopped_pids[@]}"; do
+      pid="${stopped_pids[$i]}"; token="${stopped_tokens[$i]}"
+      for attempt in $(seq 1 70); do
+        [ "$(process_token "$pid")" = "$token" ] || break
+        sleep 0.1
+      done
+      if [ "$(process_token "$pid")" = "$token" ]; then err "Managed server $pid has not stopped yet"; failed=1; fi
+    done
+  elif [ "$JSON_MODE" -eq 1 ]; then printf ']\n'; fi
+  return "$failed"
+}
+
+if [ "$STOP_MODE" -eq 1 ]; then
+  managed_instances
+  log "Managed servers stopped."
+  exit 0
+fi
 if [ "$LIST_MODE" -eq 1 ]; then
-  list_instances
+  managed_instances
   exit 0
 fi
 
@@ -1231,23 +1496,24 @@ if [ "$INSTALL_MODE" -eq 1 ]; then
       log "   Downloading FrankenPHP installer..."
 
       # Create temp file for installer (safer than piping to sh)
-      INSTALLER_TMP=$(mktemp -t phpup-frankenphp-installer.XXXXXX) || {
-        err "Failed to create temp file for installer"
+      INSTALLER_DIR=$(mktemp -d -t phpup-frankenphp-installer.XXXXXX) || {
+        err "Failed to create temp directory for installer"
         exit 1
       }
-      trap "rm -f '$INSTALLER_TMP'" EXIT
+      INSTALLER_TMP="$INSTALLER_DIR/install.sh"
+      trap 'rm -rf "$INSTALLER_DIR"' EXIT
 
       # Download installer script first
       if curl -fsSL https://frankenphp.dev/install.sh -o "$INSTALLER_TMP"; then
         chmod +x "$INSTALLER_TMP"
         log "   Running FrankenPHP installer..."
 
-        if sh "$INSTALLER_TMP"; then
+        if (cd "$INSTALLER_DIR" && BIN_DIR="$INSTALLER_DIR" sh "$INSTALLER_TMP"); then
           rm -f "$INSTALLER_TMP"
 
-          if [ -f "./frankenphp" ]; then
+          if [ -f "$INSTALLER_DIR/frankenphp" ]; then
             log "   Moving frankenphp to /usr/local/bin/..."
-            mv ./frankenphp /usr/local/bin/ && chmod +x /usr/local/bin/frankenphp
+            mv "$INSTALLER_DIR/frankenphp" /usr/local/bin/ && chmod +x /usr/local/bin/frankenphp
 
             # Verify the binary works
             if /usr/local/bin/frankenphp version >/dev/null 2>&1; then
@@ -1256,7 +1522,7 @@ if [ "$INSTALL_MODE" -eq 1 ]; then
               log "⚠️  FrankenPHP installed but verification failed"
               log "   The binary may be corrupted. Try reinstalling manually: https://frankenphp.dev/docs/install/"
             fi
-          else
+          elif ! command_exists frankenphp; then
             log "⚠️  FrankenPHP download succeeded but binary not found in current directory"
             log "   You may need to install FrankenPHP manually: https://frankenphp.dev/docs/install/"
           fi
@@ -1276,6 +1542,11 @@ if [ "$INSTALL_MODE" -eq 1 ]; then
     fi
   else
     log "✅ FrankenPHP is already available"
+  fi
+
+  if ! command_exists frankenphp || ! frankenphp version >/dev/null 2>&1; then
+    err "phpup was installed, but FrankenPHP is not ready. Install or repair FrankenPHP before starting a server."
+    exit 1
   fi
 
   log "   You can now run 'phpup' from anywhere"
@@ -1500,1187 +1771,320 @@ if [ "$BUILD_PHP_MODE" -eq 1 ]; then
   exit 0
 fi
 
-if [ "$INIT_MODE" -eq 1 ]; then
-  log "⚙️  Initializing .phpup/ configuration directory..."
-  if [ "$FORCE_MODE" -eq 1 ]; then
-    log "   (--force enabled: existing files will be overwritten)"
-  fi
-
-  # Create directories
-  mkdir -p .phpup .phpup/sessions
-
-  # Detect docroot for configuration
-  if [ -z "$DOCROOT" ]; then
-    if [ -d "public" ]; then
-      DOCROOT="$(pwd)/public"
-    elif [ -d "web" ]; then
-      DOCROOT="$(pwd)/web"
-    elif [ -d "www" ]; then
-      DOCROOT="$(pwd)/www"
-    else
-      DOCROOT="$(pwd)"
-    fi
-  fi
-
-  # Set default values for template generation
-  HOST="${HOST:-127.0.0.1}"
-  PORT="${START_PORT:-8000}"
-
-  # Generate unified PHP configuration
-  generate_php_config() {
-    local php_ini_file=".phpup/php.ini"
-
-    if [ -f "$php_ini_file" ] && [ "$FORCE_MODE" -ne 1 ]; then
-      log "PHP configuration already exists: $php_ini_file"
-      log "Use --force to overwrite existing files"
-      return 0
-    fi
-
-    # Universal PHP settings optimized for both classic and worker modes
-    cat > "$php_ini_file" <<EOF
-; Universal PHP configuration for FrankenPHP
-; Optimized for both classic and worker modes
-
-; Memory and execution limits (balanced for both modes)
-memory_limit = 256M
-max_execution_time = 60
-max_input_time = 60
-
-; Error reporting (development-friendly)
-display_errors = On
-display_startup_errors = On
-error_reporting = E_ALL
-log_errors = On
-error_log = $(pwd)/.phpup/php_errors.log
-
-; File uploads (generous limits)
-upload_max_filesize = 50M
-post_max_size = 50M
-max_file_uploads = 20
-
-; Sessions (secure defaults)
-session.save_path = $(pwd)/.phpup/sessions
-session.gc_maxlifetime = 1440
-session.cookie_httponly = On
-session.use_strict_mode = On
-session.cookie_secure = Off
-session.cookie_samesite = "Lax"
-
-; OPcache (optimized for performance)
-opcache.enable = 1
-opcache.memory_consumption = 128
-opcache.max_accelerated_files = 10000
-opcache.revalidate_freq = 2
-opcache.validate_timestamps = 1
-opcache.save_comments = 1
-opcache.enable_file_override = 1
-
-; JIT (if available in PHP 8+)
-opcache.jit_buffer_size = 64M
-opcache.jit = 1255
-
-; Security
-expose_php = Off
-allow_url_fopen = On
-allow_url_include = Off
-
-; Performance (optimized for both modes)
-realpath_cache_size = 8192K
-realpath_cache_ttl = 300
-
-; Development helpers
-auto_prepend_file =
-auto_append_file =
-
-; Timezone
-date.timezone = UTC
-
-; FrankenPHP compatibility
-; These settings work well with both classic and worker modes
-
-; Enable assertions for development (can be disabled in production)
-assert.active = 1
-assert.exception = 1
-
-; Worker mode compatibility
-; Uncomment the following line to disable exit() in worker mode if needed
-; disable_functions = exit
-
-; Additional performance settings
-max_input_vars = 1000
-variables_order = "GPCS"
-request_order = "GP"
-
-; File handling
-file_uploads = On
-auto_detect_line_endings = Off
-
-; Resource limits
-max_input_nesting_level = 64
-max_input_time = 60
-
-; Output handling
-output_buffering = 4096
-implicit_flush = Off
-
-; Safe mode (deprecated but some settings still relevant)
-; User and group restrictions are handled by the system
-
-; MySQL/MariaDB defaults
-default_socket_timeout = 60
-
-; Mail function (adjust as needed)
-sendmail_path = "/usr/sbin/sendmail -t -i"
-
-; Xdebug (disabled by default - uncomment to enable)
-; zend_extension=xdebug.so
-; xdebug.mode=debug
-; xdebug.start_with_request=yes
-; xdebug.client_host=127.0.0.1
-; xdebug.client_port=9003
-; xdebug.idekey=PHPSTORM
-; xdebug.log=/tmp/xdebug.log
-; xdebug.log_level=7
-EOF
-
-    log "📄 Generated PHP configuration: $php_ini_file"
-  }
-
-  # Generate Caddyfile templates
-  generate_caddyfile_template() {
-    local mode="$1"
-    local caddyfile_path=".phpup/Caddyfile.$mode"
-
-    if [ -f "$caddyfile_path" ] && [ "$FORCE_MODE" -ne 1 ]; then
-      log "Caddyfile already exists: $caddyfile_path"
-      log "Use --force to overwrite existing files"
-      return 0
-    fi
-
-    if [ "$mode" = "classic" ]; then
-      cat > "$caddyfile_path" <<EOF
-# phpup classic mode Caddyfile
-# Generated with detected docroot: ${DOCROOT}
-# Host: ${HOST}  Port: ${PORT}
-{
-  auto_https off
-  frankenphp {
-    num_threads 2
-    max_threads 10
-    php_ini {
-      memory_limit 256M
-      max_execution_time 60
-      file_uploads On
-      upload_max_filesize 50M
-      post_max_size 50M
-      max_file_uploads 20
-      upload_tmp_dir /tmp
-      session.save_path {\$PHPUP_DIR}/sessions
-      display_errors On
-      error_reporting E_ALL
-      log_errors On
-      error_log {\$PHPUP_DIR}/php_errors.log
-    }
-  }
-  servers {
-    timeouts {
-      read_body 30s
-      read_header 10s
-      write 30s
-      idle 2m
-    }
-  }
-}
-
-{\$PROTOCOL}://{\$HOST}:{\$PORT} {
-  root * "{\$DOCROOT}"
-  encode zstd gzip
-  php_server
-
-
-  @static {
-    file
-    not path_regexp \\.php$
-    not path /
-  }
-  handle @static {
-    file_server
-  }
-
-  # Generic subfolder application routing
-  @subapp_routes {
-    path_regexp subapp ^/([^/]+)/(.*)$
-    file {re.subapp.1}/index.php
-  }
-  handle @subapp_routes {
-    rewrite * /{re.subapp.1}/index.php?{query}
-  }
-
-
-  # Default fallback - must come last
-  handle {
-    try_files {path} /index.php?{query}
-  }
-  header *.{js,css,woff,woff2,ttf} Cache-Control "public, max-age=604800"
-  header {
-    X-Powered-By "FrankenPHP Classic"
-  }
-
-  log {
-    output file {\$PHPUP_DIR}/access.log {
-      roll_size 10mb
-      roll_keep 3
-    }
-    format json
-  }
-}
-EOF
-    else  # worker mode
-      # Determine worker file
-      WORKER_FILE="${DOCROOT}/index.php"
-      if [ -f "${DOCROOT}/public/index.php" ]; then
-        WORKER_FILE="${DOCROOT}/public/index.php"
-      elif [ -f "${DOCROOT}/app.php" ]; then
-        WORKER_FILE="${DOCROOT}/app.php"
-      fi
-
-      cat > "$caddyfile_path" <<EOF
-# phpup worker mode Caddyfile
-# Generated with detected docroot: ${DOCROOT}
-# Host: ${HOST}  Port: ${PORT}
-{
-  auto_https off
-  frankenphp {
-    num_threads 4
-    php_ini {
-      memory_limit 256M
-      max_execution_time 60
-      file_uploads On
-      upload_max_filesize 50M
-      post_max_size 50M
-      max_file_uploads 20
-      upload_tmp_dir /tmp
-      session.save_path {\$PHPUP_DIR}/sessions
-      display_errors On
-      error_reporting E_ALL
-      log_errors On
-      error_log {\$PHPUP_DIR}/php_errors.log
-    }
-    worker {
-      file "{\$WORKER_FILE}"
-      num 2
-      watch **/*.php
-      env APP_ENV development
-      env APP_DEBUG true
-    }
-  }
-}
-
-{\$PROTOCOL}://{\$HOST}:{\$PORT} {
-  root * "{\$DOCROOT}"
-  encode zstd gzip
-  php_server
-
-  # Static files
-  file_server
-  header {
-    X-Powered-By "FrankenPHP Worker"
-  }
-
-  log {
-    output file {\$PHPUP_DIR}/access.log {
-      roll_size 10mb
-      roll_keep 3
-    }
-    format json
-  }
-}
-EOF
-    fi
-
-    log "📄 Generated $mode mode Caddyfile: $caddyfile_path"
-  }
-
-  # Generate configuration files
-  generate_php_config
-  generate_caddyfile_template "classic"
-  generate_caddyfile_template "worker"
-
-  # Generate a main Caddyfile that points to classic by default
-  if [ ! -f ".phpup/Caddyfile" ]; then
-    cat > ".phpup/Caddyfile" <<EOF
-# Main Caddyfile - edit this file to customize your configuration
-# Or rename one of the templates below:
-#   - Caddyfile.classic: Traditional PHP processing
-#   - Caddyfile.worker:  Worker mode with file watching
-#
-# To use a specific template, rename it to Caddyfile or use --caddyfile option
-
-import Caddyfile.classic
-EOF
-    log "📄 Generated main Caddyfile: .phpup/Caddyfile"
-  fi
-
-  log ""
-  log "✅ Configuration files generated in .phpup/"
-  log "📁 Files created:"
-  log "   php.ini           - PHP configuration (memory, errors, uploads, etc.)"
-  log "   Caddyfile         - Main Caddyfile (imports classic by default)"
-  log "   Caddyfile.classic - Classic mode template (with inline php_ini)"
-  log "   Caddyfile.worker  - Worker mode template (with inline php_ini)"
-  log ""
-  log "📊 Log files (created at runtime):"
-  log "   php_errors.log    - PHP error log (configured in php.ini)"
-  log "   access.log        - HTTP access log (JSON format, 10MB rotation)"
-  log ""
-
-  # Save configuration if requested or if domain is set
-  if [ "$SAVE_MODE" -eq 1 ] || [ -n "$DOMAIN" ]; then
-    save_config
-  fi
-
-  log "🔧 Next steps:"
-  log "   1. Edit .phpup/php.ini to customize PHP settings"
-  log "   2. Edit .phpup/Caddyfile to customize server configuration"
-  log "   3. Run './phpup' to start the server with your custom config"
-  log "   4. Check .phpup/php_errors.log for PHP errors"
-  log ""
-  exit 0
-fi
-
-# Ensure FrankenPHP is available
-if ! command_exists frankenphp; then
-  err "'frankenphp' binary not found in PATH. Please install FrankenPHP or ensure it's available."
-  exit 127
-fi
-
-# Safe .env file loader - only processes KEY=VALUE pairs
-load_env_file() {
-  local env_file="$1"
-  local context="$2"
-
-  if [ ! -f "$env_file" ]; then
-    return 0
-  fi
-
-  if [ ! -r "$env_file" ]; then
-    err "Cannot read env file: $env_file (permission denied)"
-    return 1
-  fi
-
-  log "🔧 $context: $env_file"
-
-  # Parse .env file safely - only accept KEY=VALUE format
-  while IFS= read -r line || [ -n "$line" ]; do
-    # Skip empty lines and comments
-    case "$line" in
-      ''|'#'*) continue ;;
-    esac
-
-    # Only process valid KEY=VALUE lines (no spaces around =, valid variable names)
-    if [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*=.*$ ]]; then
-      # Extract key and value
-      key="${line%%=*}"
-      value="${line#*=}"
-
-      # Validate key name (alphanumeric + underscore, not starting with number)
-      if [[ "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
-        # Remove quotes if present (simple quote removal, not full shell parsing)
-        if [[ "$value" =~ ^\".*\"$ ]] || [[ "$value" =~ ^\'.*\'$ ]]; then
-          value="${value#?}"  # Remove first character
-          value="${value%?}"  # Remove last character
-        fi
-
-        # Export the variable safely
-        export "$key=$value"
-      else
-        err "Invalid environment variable name in $env_file: $key"
-      fi
-    else
-      # Log suspicious lines but don't fail
-      if [ "$VERBOSE" -eq 1 ]; then
-        log "⚠️  Skipping invalid line in $env_file: $line"
-      fi
-    fi
-  done < "$env_file"
-}
-
-# Load env file if specified
-if [ -n "$ENV_FILE" ]; then
-  load_env_file "$ENV_FILE" "Loading environment from"
-fi
-
-# Auto-load .phpup/.env if it exists
-load_env_file ".phpup/.env" "Auto-loading environment from"
-
-# Apply security hardening
-secure_files
-
-# Run security checks (but don't fail - just warn)
-if [ "$QUIET" -ne 1 ]; then
-  security_checks >/dev/null 2>&1 || true
-fi
-
-# Check system resources
-if [ "$VERBOSE" -eq 1 ]; then
-  debug "Checking system resources..."
-  check_system_resources >/dev/null 2>&1 || true
-fi
-
-# Handle domain setup (mkcert + /etc/hosts)
-if [ -n "$DOMAIN" ]; then
-  log "🌐 Setting up domain: $DOMAIN"
-
-  # Update HOST to use domain if not explicitly set by user
-  if [ "$HOST" = "127.0.0.1" ]; then
-    HOST="$DOMAIN"
-  fi
-
-  # Setup mkcert and generate certificate for local HTTPS
-  if [ "$HTTPS_MODE" = "local" ]; then
-    if check_mkcert || setup_mkcert; then
-      generate_cert "$DOMAIN" || log "⚠️  Failed to generate SSL certificate for $DOMAIN"
-    else
-      log "⚠️  mkcert setup failed - HTTPS will not work for custom domain"
-    fi
-  fi
-
-  # Manage /etc/hosts entry
-  if [ "$MANAGE_HOSTS" -eq 1 ]; then
-    if manage_hosts_entry "add" "$DOMAIN" "127.0.0.1"; then
-      HOSTS_ENTRY_ADDED=1
-    else
-      log "⚠️  Failed to add domain to /etc/hosts"
-    fi
-  fi
-fi
-
-# Save configuration if requested
-if [ "$SAVE_MODE" -eq 1 ]; then
-  save_config
-fi
-
-# Validate options
-if [ "$HTTPS_MODE" != "off" ] && [ "$HTTPS_MODE" != "local" ] && [ "$HTTPS_MODE" != "on" ]; then
-  err "Invalid --https mode: $HTTPS_MODE (must be: off, local, or on)"
+# Validate the fully resolved settings, including values read from project config.
+validate_host "$HOST" || { err "Invalid host: $HOST"; exit 2; }
+validate_port "$START_PORT" || { err "Invalid port: $START_PORT"; exit 2; }
+START_PORT=$((10#$START_PORT))
+validate_threads "$PHP_THREADS" || { err "Invalid PHP threads: $PHP_THREADS"; exit 2; }
+validate_time "$MAX_WAIT_TIME" || { err "Invalid max wait time: $MAX_WAIT_TIME"; exit 2; }
+case "$HTTPS_MODE" in off|local|on) ;; *) err "Invalid HTTPS mode: $HTTPS_MODE"; exit 2 ;; esac
+[ -z "$DOMAIN" ] || validate_domain "$DOMAIN" || { err "Invalid domain: $DOMAIN"; exit 2; }
+for flag in "$WORKER_MODE" "$WATCH_MODE" "$COMPRESSION" "$OPEN_BROWSER" "$XDEBUG"; do
+  [[ "$flag" = 0 || "$flag" = 1 ]] || { err "Boolean config values must be 0 or 1"; exit 2; }
+done
+if [ "$WATCH_MODE" -eq 1 ] && [ "$WORKER_MODE" -eq 0 ]; then
+  err "--watch requires --worker and a compatible FrankenPHP worker script."
   exit 2
 fi
 
-# Detect docroot if not provided
 if [ -z "$DOCROOT" ]; then
-  if [ -d "public" ]; then
-    DOCROOT="$(pwd)/public"
-  elif [ -d "web" ]; then
-    DOCROOT="$(pwd)/web"
-  elif [ -d "www" ]; then
-    DOCROOT="$(pwd)/www"
-  else
-    DOCROOT="$(pwd)"
-  fi
-fi
-
-# Detect Caddyfile if not provided
-if [ -z "$CADDYFILE" ]; then
-  # First check for custom Caddyfiles
-  for f in \
-    ".phpup/Caddyfile" \
-    "Caddyfile.local" \
-    "Caddyfile.dev" \
-    "Caddyfile" \
-    "caddy/Caddyfile" \
-    "config/Caddyfile" \
-    ".Caddyfile"
-  do
-    if [ -f "$f" ]; then
-      CADDYFILE="$f"
-      break
-    fi
+  for dir in public web www .; do
+    if [ -d "$dir" ]; then DOCROOT="$dir"; break; fi
   done
-
-  # If no custom Caddyfile found, check for previously generated mode-specific files
-  if [ -z "$CADDYFILE" ]; then
-    # Determine which mode we'll be running in
-    DETECT_WORKER_MODE=$WORKER_MODE
-    if [ "$WATCH_MODE" -eq 1 ] && [ "$WORKER_MODE" -eq 0 ]; then
-      DETECT_WORKER_MODE=1
-    fi
-
-    if [ "$DETECT_WORKER_MODE" -eq 1 ]; then
-      # Check for worker mode Caddyfile
-      if [ -f ".phpup/Caddyfile.worker" ]; then
-        CADDYFILE=".phpup/Caddyfile.worker"
-      fi
-    else
-      # Check for classic mode Caddyfile
-      if [ -f ".phpup/Caddyfile.classic" ]; then
-        CADDYFILE=".phpup/Caddyfile.classic"
-      fi
-    fi
-  fi
 fi
+validate_file_path "$DOCROOT" false && [ -d "$DOCROOT" ] || { err "Document root does not exist or is invalid: $DOCROOT"; exit 2; }
+DOCROOT=$(cd "$DOCROOT" && pwd -P)
+validate_file_path "$DOCROOT" false || { err "Invalid resolved document root"; exit 2; }
+PROJECT_PATH=$(pwd -P)
+[[ ! "$PROJECT_PATH" =~ [[:cntrl:]] ]] || { err "Project paths cannot contain control characters"; exit 2; }
+PHPUP_DIR="$PROJECT_PATH/.phpup"
+WORKER_FILE="$DOCROOT/index.php"
+[ ! -f "$DOCROOT/app.php" ] || WORKER_FILE="$DOCROOT/app.php"
+PORT="$START_PORT"
+PROTOCOL=http
+[ "$HTTPS_MODE" = off ] || PROTOCOL=https
+SITE_HOST="${DOMAIN:-$HOST}"
+[ "$SITE_HOST" != ::1 ] || SITE_HOST='[::1]'
+# Hostnames choose the HTTP host; only an explicit IP opts into another interface.
+BIND_HOST=127.0.0.1
+if [[ "$HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || [ "$HOST" = ::1 ]; then BIND_HOST="$HOST"; fi
 
-FINAL_CADDYFILE=""
-
-# Always compute a free port so we can bind deterministically
-# Determine port based on HTTPS mode
-if [ "$HTTPS_MODE" = "on" ]; then
-  # For production HTTPS, try standard HTTPS port
-  if [ "$START_PORT" = "8000" ]; then
-    START_PORT="443"
-  fi
-fi
-
-# Discover a free port starting from the requested value
-AVAILABLE_PORT=$(find_free_port "$HOST" "$START_PORT") || {
-  err "❌ Did not find any free port starting at $START_PORT"
-  log "Tried 2001 consecutive ports without success."
-  log "You can pick an explicit port with --port or stop other listeners."
-  exit 1
+caddy_quote() {
+  local text="$1"
+  text="${text//\\/\\\\}"; text="${text//\"/\\\"}"
+  printf '"%s"' "$text"
 }
 
-if [ "$AVAILABLE_PORT" != "$START_PORT" ]; then
-  log "ℹ️  Port $START_PORT is busy, switching to $AVAILABLE_PORT"
-fi
-
-PORT="$AVAILABLE_PORT"
-
-# Set protocol based on HTTPS mode
-if [ "$HTTPS_MODE" = "off" ]; then
-  PROTOCOL="http"
-else
-  PROTOCOL="https"
-fi
-
-# Detect worker file for exports
-WORKER_FILE="${DOCROOT}/index.php"
-if [ -f "${DOCROOT}/public/index.php" ]; then
-  WORKER_FILE="${DOCROOT}/public/index.php"
-elif [ -f "${DOCROOT}/app.php" ]; then
-  WORKER_FILE="${DOCROOT}/app.php"
-fi
-
-export HOST PORT DOCROOT PROTOCOL PHP_THREADS MAX_WAIT_TIME
-# Also export variables used by the official FrankenPHP Caddyfile
-export SERVER_NAME="${HOST}:${PORT}"
-export SERVER_ROOT="${DOCROOT}"
-# Compatibility alias sometimes used in community examples
-export DOCUMENT_ROOT="${DOCROOT}"
-# Worker file for worker mode templates
-export WORKER_FILE="${WORKER_FILE}"
-# Config directory for logs and certs
-export PHPUP_DIR="$(pwd)/.phpup"
-
-if [ -n "$CADDYFILE" ]; then
-  MODE="caddyfile"
-  # With custom Caddyfile: compute free port and export env vars for placeholders
-  FINAL_CADDYFILE="$CADDYFILE"
-  log "📄 Using custom Caddyfile: $FINAL_CADDYFILE"
-  log "🌍 Env available to Caddyfile: HOST=$HOST PORT=$PORT DOCROOT=$DOCROOT SERVER_NAME=$SERVER_NAME SERVER_ROOT=$SERVER_ROOT WORKER_FILE=$WORKER_FILE PHPUP_DIR=$PHPUP_DIR"
-  if frankenphp run --help >/dev/null 2>&1; then
-    CMD=(frankenphp run --config "$FINAL_CADDYFILE")
-  else
-    CMD=(frankenphp start --config "$FINAL_CADDYFILE")
+# A single renderer serves initialization examples, dry runs and live launches.
+render_caddyfile() {
+  local worker="$1" threads="$PHP_THREADS"
+  if [ "$threads" = auto ]; then threads=2; fi
+  printf '# Generated by phpup. Runtime files are replaced each launch.\n'
+  printf '# Document root: %s\n# HOST=%s PORT=%s DOCROOT=%s\n' "$DOCROOT" "$HOST" "$PORT" "$DOCROOT"
+  printf '{\n  admin off\n'
+  [ "$HTTPS_MODE" != off ] || printf '  auto_https off\n'
+  [ "$HTTPS_MODE" != local ] || printf '  local_certs\n'
+  printf '  frankenphp {\n    num_threads %s\n    max_wait_time %s\n' "$threads" "$MAX_WAIT_TIME"
+  [ "$PHP_THREADS" != auto ] || printf '    max_threads 10\n'
+  if [ ! -f "$PHPUP_DIR/php.ini" ]; then
+    cat <<'EOF'
+    php_ini {
+      memory_limit 256M
+      max_execution_time 60
+      upload_max_filesize 50M
+      post_max_size 50M
+      display_errors On
+      error_reporting E_ALL
+      log_errors On
+      opcache.validate_timestamps 1
+      opcache.revalidate_freq 0
+      session.save_path "\"${PHPUP_DIR}/sessions\""
+      error_log "\"${PHPUP_DIR}/php_errors.log\""
+    }
+EOF
   fi
-
-  if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
-    CMD+=("${EXTRA_ARGS[@]}")
+  if [ "$XDEBUG" -eq 1 ]; then
+    printf '    php_ini xdebug.mode debug\n    php_ini xdebug.start_with_request yes\n    php_ini xdebug.client_host 127.0.0.1\n    php_ini xdebug.client_port 9003\n'
   fi
-
-  if [ "$DRY_RUN" -ne 1 ]; then
-    log "🚀 Starting FrankenPHP (classic mode) at ${PROTOCOL}://$HOST:$PORT"
-    log "📁 Docroot: $DOCROOT"
-  fi
-else
-  # No custom Caddyfile: generate an optimized one in .phpup/Caddyfile
-  mkdir -p .phpup .phpup/sessions
-
-  # Determine if we're in worker mode (explicit or due to watch mode)
-  EFFECTIVE_WORKER_MODE=$WORKER_MODE
-  if [ "$WATCH_MODE" -eq 1 ] && [ "$WORKER_MODE" -eq 0 ]; then
-    log "WARNING: File watching requires --worker mode. Adding --worker automatically."
-    EFFECTIVE_WORKER_MODE=1
-  fi
-
-  # No external php.ini generation; settings are defined in inline php_ini blocks
-
-  if [ "$EFFECTIVE_WORKER_MODE" -eq 1 ]; then
-    # ====== WORKER MODE CADDYFILE ======
-    FINAL_CADDYFILE=".phpup/Caddyfile.worker"
-
-    # Configuration is provided inline via php_ini in the generated Caddyfile
-
-    # Determine worker file
-    WORKER_FILE="${DOCROOT}/index.php"
-    if [ -f "${DOCROOT}/public/index.php" ]; then
-      WORKER_FILE="${DOCROOT}/public/index.php"
-    elif [ -f "${DOCROOT}/app.php" ]; then
-      WORKER_FILE="${DOCROOT}/app.php"
-    fi
-
-    # Build global config for worker mode
-    GLOBAL_CONFIG="{"
-
-    # Admin API disabled
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n  admin off"
-
-    # HTTPS configuration
-    if [ "$HTTPS_MODE" = "off" ]; then
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n  auto_https off"
-    elif [ "$HTTPS_MODE" = "local" ]; then
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n  local_certs"
-    fi
-
-    # FrankenPHP worker configuration
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n  frankenphp {"
-
-    # Inline PHP configuration for worker mode
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    php_ini {"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      memory_limit 256M"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      max_execution_time 60"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      upload_max_filesize 50M"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      post_max_size 50M"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      max_file_uploads 20"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      session.save_path {\$PHPUP_DIR}/sessions"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      display_errors On"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      error_reporting E_ALL"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      log_errors On"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      error_log {\$PHPUP_DIR}/php_errors.log"
-    if [ "$XDEBUG" -eq 1 ]; then
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      xdebug.mode debug"
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      xdebug.start_with_request yes"
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      xdebug.client_host 127.0.0.1"
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      xdebug.client_port 9003"
-    fi
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    }"
-
-    # Thread configuration for workers
-    if [ "$PHP_THREADS" != "auto" ]; then
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    num_threads ${PHP_THREADS}"
-    else
-      # Optimal thread count for worker mode
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    num_threads 4"
-    fi
-
-    # Worker configuration with watch support
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    worker {"
-    # Escape worker file path properly
-    ESCAPED_WORKER_FILE=$(printf '%s' "$WORKER_FILE" | sed 's/"/\\"/g')
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      file \"${ESCAPED_WORKER_FILE}\""
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      num 2"
-
+  if [ "$worker" -eq 1 ]; then
+    printf '    worker {\n      file '; caddy_quote "$WORKER_FILE"; printf '\n      num 2\n'
     if [ "$WATCH_MODE" -eq 1 ]; then
-      WATCH_FILES="**/*.php"
-      if [ -n "$WATCH_PATTERNS" ]; then
-        # WATCH_PATTERNS already validated in argument parsing
-        WATCH_FILES="${WATCH_FILES},${WATCH_PATTERNS}"
-      fi
-      # Quote watch patterns to prevent injection
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      watch \"${WATCH_FILES}\""
+      printf '      watch "**/*.php"\n'
+      local pattern
+      local -a patterns=()
+      IFS=',' read -r -a patterns <<< "$WATCH_PATTERNS"
+      for pattern in "${patterns[@]}"; do
+        [ -z "$pattern" ] || { printf '      watch '; caddy_quote "$pattern"; printf '\n'; }
+      done
     fi
-
-    # Worker-specific environment variables
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      env APP_ENV development"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      env APP_DEBUG true"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    }"
-
-    # Max wait time for workers
-    if [ "$MAX_WAIT_TIME" != "30s" ]; then
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    max_wait_time ${MAX_WAIT_TIME}"
-    fi
-
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n  }"
-
-    # Debug mode
-    if [ "$VERBOSE" -eq 1 ]; then
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n  debug"
-    fi
-
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n}"
-
-    # Build site config for worker mode
-    # Escape host and docroot for Caddyfile safety (already validated but defense in depth)
-    ESCAPED_HOST=$(printf '%s' "$HOST" | sed 's/"/\\"/g')
-    ESCAPED_DOCROOT=$(printf '%s' "$DOCROOT" | sed 's/"/\\"/g')
-
-    # Handle custom domains with proper TLS configuration
-    if [ -n "$DOMAIN" ]; then
-      ESCAPED_DOMAIN=$(printf '%s' "$DOMAIN" | sed 's/"/\\"/g')
-      if [ "$HTTPS_MODE" = "local" ]; then
-        # Custom domain with HTTPS - include computed port
-        SITE_CONFIG="https://${ESCAPED_DOMAIN}:${PORT} {"
-        # Add TLS directive to use mkcert certificates
-        SITE_CONFIG="${SITE_CONFIG}\n  tls {\\\$PHPUP_DIR}/certs/${ESCAPED_DOMAIN}.pem {\\\$PHPUP_DIR}/certs/${ESCAPED_DOMAIN}-key.pem"
-      elif [ "$HTTPS_MODE" = "off" ]; then
-        # Custom domain with HTTP
-        SITE_CONFIG="http://${ESCAPED_DOMAIN}:${PORT} {"
-      else
-        # Custom domain with automatic HTTPS
-        SITE_CONFIG="https://${ESCAPED_DOMAIN}:${PORT} {"
-      fi
-    else
-      # No custom domain - use HOST:PORT
-      if [ "$HTTPS_MODE" = "off" ]; then
-        SITE_CONFIG="http://${ESCAPED_HOST}:${PORT} {"
-      else
-        SITE_CONFIG="${ESCAPED_HOST}:${PORT} {"
-      fi
-    fi
-    SITE_CONFIG="${SITE_CONFIG}\n  root * \"${ESCAPED_DOCROOT}\""
-
-    # Compression
-    if [ "$COMPRESSION" -eq 1 ]; then
-      SITE_CONFIG="${SITE_CONFIG}\n  encode zstd gzip"
-    fi
-
-    # Request handling for worker mode
-    SITE_CONFIG="${SITE_CONFIG}\n  php_server"
-
-    # Metrics endpoint
-
-    # Enhanced routing for subfolder applications (e.g. /cockpit, /admin)
-    SITE_CONFIG="${SITE_CONFIG}\n  # Handle subfolder apps first"
-    SITE_CONFIG="${SITE_CONFIG}\n  @subapp {"
-    SITE_CONFIG="${SITE_CONFIG}\n    file {"
-    SITE_CONFIG="${SITE_CONFIG}\n      try_files {path} {path}/index.php"
-    SITE_CONFIG="${SITE_CONFIG}\n    }"
-    SITE_CONFIG="${SITE_CONFIG}\n  }"
-    SITE_CONFIG="${SITE_CONFIG}\n  rewrite @subapp {http.matchers.file.relative}"
-    SITE_CONFIG="${SITE_CONFIG}\n  # Static file serving"
-    SITE_CONFIG="${SITE_CONFIG}\n  file_server"
-
-    # Headers for worker mode
-    SITE_CONFIG="${SITE_CONFIG}\n  header {\n    X-Powered-By \"FrankenPHP Worker\"\n  }"
-
-    # Logging - always log to file, add console output in verbose mode
-    SITE_CONFIG="${SITE_CONFIG}\n  log {"
-    SITE_CONFIG="${SITE_CONFIG}\n    output file {\$PHPUP_DIR}/access.log {"
-    SITE_CONFIG="${SITE_CONFIG}\n      roll_size 10mb"
-    SITE_CONFIG="${SITE_CONFIG}\n      roll_keep 3"
-    SITE_CONFIG="${SITE_CONFIG}\n    }"
-    SITE_CONFIG="${SITE_CONFIG}\n    format json"
-    SITE_CONFIG="${SITE_CONFIG}\n  }"
-    if [ "$VERBOSE" -eq 1 ]; then
-      SITE_CONFIG="${SITE_CONFIG}\n  log {\n    output stdout\n    format console\n    level DEBUG\n  }"
-    fi
-
-    SITE_CONFIG="${SITE_CONFIG}\n}"
-
-  else
-    # ====== CLASSIC MODE CADDYFILE ======
-    FINAL_CADDYFILE=".phpup/Caddyfile.classic"
-
-    # Configuration is provided inline via php_ini in the generated Caddyfile
-
-    # Build global config for classic mode
-    GLOBAL_CONFIG="{"
-
-    # Admin API disabled
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n  admin off"
-
-    # HTTPS configuration
-    if [ "$HTTPS_MODE" = "off" ]; then
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n  auto_https off"
-    elif [ "$HTTPS_MODE" = "local" ]; then
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n  local_certs"
-    fi
-
-    # FrankenPHP classic mode configuration
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n  frankenphp {"
-
-    # Inline PHP configuration for classic mode
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    php_ini {"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      memory_limit 256M"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      max_execution_time 60"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      upload_max_filesize 50M"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      post_max_size 50M"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      max_file_uploads 20"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      session.save_path {\$PHPUP_DIR}/sessions"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      display_errors On"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      error_reporting E_ALL"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      log_errors On"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      error_log {\$PHPUP_DIR}/php_errors.log"
-    if [ "$XDEBUG" -eq 1 ]; then
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      xdebug.mode debug"
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      xdebug.start_with_request yes"
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      xdebug.client_host 127.0.0.1"
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      xdebug.client_port 9003"
-    fi
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    }"
-
-    # Thread configuration for classic mode
-    if [ "$PHP_THREADS" != "auto" ]; then
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    num_threads ${PHP_THREADS}"
-    fi
-
-    # Max threads for classic mode (optional)
-    if [ "$PHP_THREADS" = "auto" ]; then
-      # Auto-scaling threads for classic mode
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    num_threads 2"
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    max_threads 10"
-    fi
-
-    # Max wait time
-    if [ "$MAX_WAIT_TIME" != "30s" ]; then
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    max_wait_time ${MAX_WAIT_TIME}"
-    fi
-
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n  }"
-
-    # Debug mode
-    if [ "$VERBOSE" -eq 1 ]; then
-      GLOBAL_CONFIG="${GLOBAL_CONFIG}\n  debug"
-    fi
-
-    # Performance settings for classic mode
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n  servers {"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    timeouts {"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      read_body 30s"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      read_header 10s"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      write 30s"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n      idle 2m"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n    }"
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n  }"
-
-    GLOBAL_CONFIG="${GLOBAL_CONFIG}\n}"
-
-    # Build site config for classic mode
-    # Escape host and docroot for Caddyfile safety (already validated but defense in depth)
-    ESCAPED_HOST=$(printf '%s' "$HOST" | sed 's/"/\\"/g')
-    ESCAPED_DOCROOT=$(printf '%s' "$DOCROOT" | sed 's/"/\\"/g')
-
-    # Handle custom domains with proper TLS configuration
-    if [ -n "$DOMAIN" ]; then
-      ESCAPED_DOMAIN=$(printf '%s' "$DOMAIN" | sed 's/"/\\"/g')
-      if [ "$HTTPS_MODE" = "local" ]; then
-        # Custom domain with HTTPS - include computed port
-        SITE_CONFIG="https://${ESCAPED_DOMAIN}:${PORT} {"
-        # Add TLS directive to use mkcert certificates
-        SITE_CONFIG="${SITE_CONFIG}\n  tls {\\\$PHPUP_DIR}/certs/${ESCAPED_DOMAIN}.pem {\\\$PHPUP_DIR}/certs/${ESCAPED_DOMAIN}-key.pem"
-      elif [ "$HTTPS_MODE" = "off" ]; then
-        # Custom domain with HTTP
-        SITE_CONFIG="http://${ESCAPED_DOMAIN}:${PORT} {"
-      else
-        # Custom domain with automatic HTTPS
-        SITE_CONFIG="https://${ESCAPED_DOMAIN}:${PORT} {"
-      fi
-    else
-      # No custom domain - use HOST:PORT
-      if [ "$HTTPS_MODE" = "off" ]; then
-        SITE_CONFIG="http://${ESCAPED_HOST}:${PORT} {"
-      else
-        SITE_CONFIG="${ESCAPED_HOST}:${PORT} {"
-      fi
-    fi
-    SITE_CONFIG="${SITE_CONFIG}\n  root * \"${ESCAPED_DOCROOT}\""
-
-    # Compression
-    if [ "$COMPRESSION" -eq 1 ]; then
-      SITE_CONFIG="${SITE_CONFIG}\n  encode zstd gzip"
-    fi
-
-    # PHP handling for classic mode
-    SITE_CONFIG="${SITE_CONFIG}\n  php_server"
-
-    # Metrics endpoint
-
-    # Enhanced routing: static files → subfolder apps → directory browsing → router fallback
-
-    # Static files (non-PHP) - must come first to avoid conflicts with subfolder routing
-    SITE_CONFIG="${SITE_CONFIG}\n  @static {"
-    SITE_CONFIG="${SITE_CONFIG}\n    file"
-    SITE_CONFIG="${SITE_CONFIG}\n    not path_regexp \\.php$"
-    SITE_CONFIG="${SITE_CONFIG}\n    not path /"
-    SITE_CONFIG="${SITE_CONFIG}\n  }"
-    SITE_CONFIG="${SITE_CONFIG}\n  handle @static {"
-
-    # Static file handling continues...
-    SITE_CONFIG="${SITE_CONFIG}\n    file_server"
-    SITE_CONFIG="${SITE_CONFIG}\n  }"
-
-    # Generic subfolder app routing - route /subfolder/* to /subfolder/index.php if it exists
-    SITE_CONFIG="${SITE_CONFIG}\n  # Generic subfolder application routing"
-    SITE_CONFIG="${SITE_CONFIG}\n  @subapp_routes {"
-    SITE_CONFIG="${SITE_CONFIG}\n    path_regexp subapp ^/([^/]+)/(.*)$"
-    SITE_CONFIG="${SITE_CONFIG}\n    file {re.subapp.1}/index.php"
-    SITE_CONFIG="${SITE_CONFIG}\n  }"
-    SITE_CONFIG="${SITE_CONFIG}\n  handle @subapp_routes {"
-    SITE_CONFIG="${SITE_CONFIG}\n    rewrite * /{re.subapp.1}/index.php?{query}"
-    SITE_CONFIG="${SITE_CONFIG}\n  }"
-
-
-
-
-    # Fallback to root index.php for unmatched routes (PHP processing) - must be in handle block
-    SITE_CONFIG="${SITE_CONFIG}\n  # Default fallback - must come last"
-    SITE_CONFIG="${SITE_CONFIG}\n  handle {"
-    SITE_CONFIG="${SITE_CONFIG}\n    try_files {path} /index.php?{query}"
-    SITE_CONFIG="${SITE_CONFIG}\n  }"
-    SITE_CONFIG="${SITE_CONFIG}\n  header *.{js,css,woff,woff2,ttf} Cache-Control \"public, max-age=604800\""
-
-    # Headers for classic mode
-    SITE_CONFIG="${SITE_CONFIG}\n  header {\n    X-Powered-By \"FrankenPHP Classic\"\n  }"
-
-    # Logging - always log to file, add console output in verbose mode
-    SITE_CONFIG="${SITE_CONFIG}\n  log {"
-    SITE_CONFIG="${SITE_CONFIG}\n    output file {\$PHPUP_DIR}/access.log {"
-    SITE_CONFIG="${SITE_CONFIG}\n      roll_size 10mb"
-    SITE_CONFIG="${SITE_CONFIG}\n      roll_keep 3"
-    SITE_CONFIG="${SITE_CONFIG}\n    }"
-    SITE_CONFIG="${SITE_CONFIG}\n    format json"
-    SITE_CONFIG="${SITE_CONFIG}\n  }"
-    if [ "$VERBOSE" -eq 1 ]; then
-      SITE_CONFIG="${SITE_CONFIG}\n  log {\n    output stdout\n    format console\n    level DEBUG\n  }"
-    fi
-
-    SITE_CONFIG="${SITE_CONFIG}\n}"
+    printf '    }\n'
   fi
-
-  # Write the Caddyfile
-  if ! echo -e "${GLOBAL_CONFIG}\n\n${SITE_CONFIG}" > "$FINAL_CADDYFILE"; then
-    err "Failed to write Caddyfile to $FINAL_CADDYFILE"
-    exit 1
+  printf '  }\n}\n\n%s://%s:%s {\n  bind %s\n  root * ' "$PROTOCOL" "$SITE_HOST" "$PORT" "$BIND_HOST"
+  caddy_quote "$DOCROOT"; printf '\n'
+  if [ "$HTTPS_MODE" = local ] && [ -n "$DOMAIN" ]; then
+    printf '  tls '; caddy_quote "$PHPUP_DIR/certs/$DOMAIN.pem"; printf ' '; caddy_quote "$PHPUP_DIR/certs/$DOMAIN-key.pem"; printf '\n'
   fi
-  MODE="generated"
+  [ "$COMPRESSION" -ne 1 ] || printf '  encode zstd gzip\n'
+  cat <<'EOF'
+  # Reject private project files before rewriting or serving PHP/static content.
+  route {
+    @private path_regexp private (?i)(^|/)\.[^/]+|(^|/)(composer\.(json|lock)|package(-lock)?\.json|phpunit\.xml(\.dist)?|php\.ini|Caddyfile[^/]*)(/|$)
+    respond @private 404
+    @subapp {
+      not file {path}
+      path_regexp subapp ^/([^/]+)/(.*)$
+      file {re.subapp.1}/index.php
+    }
+    rewrite @subapp /{re.subapp.1}/index.php
+    php_server
+  }
+  header Cache-Control "no-store"
+  log {
+EOF
+  printf '    output file '; caddy_quote "$PHPUP_DIR/access.log"; printf ' {\n'
+  cat <<'EOF'
+      roll_size 10mb
+      roll_keep 3
+    }
+    format json
+  }
+}
+EOF
+}
 
-  # Build command
-  CMD=(frankenphp)
-
-  # Determine subcommand
-  if frankenphp run --help >/dev/null 2>&1; then
-    CMD+=("run")
-  else
-    CMD+=("start")
-  fi
-
-  CMD+=("--config" "$FINAL_CADDYFILE")
-
-  # Add extra args if provided
-  if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
-    CMD+=("${EXTRA_ARGS[@]}")
-  fi
-
-  if [ "$DRY_RUN" -ne 1 ]; then
-    if [ "$EFFECTIVE_WORKER_MODE" -eq 1 ]; then
-      log "📄 Generated worker mode Caddyfile at $FINAL_CADDYFILE"
-      log "🚀 Starting FrankenPHP (worker mode) at ${PROTOCOL}://$HOST:$PORT"
-      log "Worker file: $WORKER_FILE"
-      log "Worker instances: 2"
-    else
-      log "📄 Generated classic mode Caddyfile at $FINAL_CADDYFILE"
-      log "🚀 Starting FrankenPHP (classic mode) at ${PROTOCOL}://$HOST:$PORT"
-    fi
-    log "📁 Docroot: $DOCROOT"
-    if [ "$PHP_THREADS" != "auto" ]; then
-      log "PHP threads: $PHP_THREADS"
-    elif [ "$EFFECTIVE_WORKER_MODE" -eq 1 ]; then
-      log "PHP threads: 4 (optimized for worker mode)"
-    else
-      log "PHP threads: 2-10 (auto-scaling for classic mode)"
-    fi
-    if [ "$WATCH_MODE" -eq 1 ]; then
-      log "File watcher: enabled"
-    fi
-    # Using inline php_ini configuration
-  fi
+if [ "$DRY_RUN" -eq 1 ] && [ "$INIT_MODE" -eq 1 ]; then
+  echo 'DRY-RUN: would initialize .phpup/config, php.ini and Caddyfile examples'
+  exit 0
 fi
-
-if [ "$DRY_RUN" -eq 1 ]; then
-  # Build a quoted command preview
-  CMD_STR=$(printf '%q ' "${CMD[@]}")
-  CMD_STR=${CMD_STR%% }
-  echo "DRY-RUN"
-  if [ "${EFFECTIVE_WORKER_MODE:-$WORKER_MODE}" -eq 1 ]; then
-    echo "Mode: worker (generated)"
-  else
-    echo "Mode: classic (${MODE:-unknown})"
+if [ "$INIT_MODE" -eq 1 ]; then
+  mkdir -p "$PHPUP_DIR/sessions"
+  chmod 700 "$PHPUP_DIR"
+  if [ ! -f "$PHPUP_DIR/php.ini" ] || [ "$FORCE_MODE" -eq 1 ]; then
+    ini_tmp=$(mktemp "$PHPUP_DIR/php.ini.XXXXXX")
+    cat > "$ini_tmp" <<'EOF'
+; Project PHP settings, loaded in addition to the system PHP configuration.
+memory_limit = 256M
+max_execution_time = 60
+upload_max_filesize = 50M
+post_max_size = 50M
+display_errors = On
+error_reporting = E_ALL
+log_errors = On
+error_log = "${PHPUP_DIR}/php_errors.log"
+session.save_path = "${PHPUP_DIR}/sessions"
+opcache.validate_timestamps = 1
+opcache.revalidate_freq = 0
+EOF
+    mv -f "$ini_tmp" "$PHPUP_DIR/php.ini"
   fi
-  if [ "$MODE" = "caddyfile" ] || [ "$MODE" = "generated" ]; then
-    echo "Caddyfile: $FINAL_CADDYFILE"
-    if [ "$MODE" = "generated" ] && [ "$VERBOSE" -eq 1 ]; then
-      echo "Caddyfile contents:"
-      cat "$FINAL_CADDYFILE" | sed 's/^/  /'
+  for mode in classic worker; do
+    file="$PHPUP_DIR/Caddyfile.$mode"
+    if [ ! -f "$file" ] || [ "$FORCE_MODE" -eq 1 ]; then
+      tmp=$(mktemp "$PHPUP_DIR/Caddyfile.XXXXXX")
+      worker=0; [ "$mode" != worker ] || worker=1
+      render_caddyfile "$worker" > "$tmp"
+      mv -f "$tmp" "$file"
     fi
-  fi
-  echo "URL: ${PROTOCOL}://${HOST}:${PORT}"
-  echo "📁 Docroot: $DOCROOT"
-  echo "ServerName: $SERVER_NAME"
-  if [ "${EFFECTIVE_WORKER_MODE:-$WORKER_MODE}" -eq 1 ]; then
-    echo "Worker mode: enabled"
-    if [ -n "${WORKER_FILE:-}" ]; then
-      echo "Worker file: $WORKER_FILE"
-    fi
-  fi
-  if [ "$PHP_THREADS" != "auto" ]; then
-    echo "PHP threads: $PHP_THREADS"
-  elif [ "${EFFECTIVE_WORKER_MODE:-$WORKER_MODE}" -eq 1 ]; then
-    echo "PHP threads: 4 (optimized for worker mode)"
-  else
-    echo "PHP threads: 2-10 (auto-scaling for classic mode)"
-  fi
-  if [ "$WATCH_MODE" -eq 1 ]; then
-    echo "File watcher: enabled"
-  fi
-  if [ "$HTTPS_MODE" != "off" ]; then
-    echo "HTTPS mode: $HTTPS_MODE"
-  fi
-  # Using inline php_ini configuration
-  echo "Command: $CMD_STR"
+  done
+  if [ ! -f "$CONFIG_FILE" ] || [ "$SAVE_MODE" -eq 1 ] || [ "$FORCE_MODE" -eq 1 ]; then save_config; fi
+  log "Initialized .phpup/config and php.ini. Caddyfile.classic/worker are examples."
+  log "Normal launches regenerate runtime config. Use --caddyfile to opt into a custom file."
   exit 0
 fi
 
-# Set up signal handling for graceful shutdown
+command_exists frankenphp || { err "'frankenphp' binary not found in PATH"; exit 127; }
+FRANKENPHP_BIN=$(command -v frankenphp)
+
+load_app_env "$PHPUP_DIR/.env"
+if [ -n "$ENV_FILE" ]; then
+  [ -r "$ENV_FILE" ] || { err "Environment file is not readable: $ENV_FILE"; exit 2; }
+  load_app_env "$ENV_FILE"
+fi
+
+# Explicit/custom files remain user-owned. Never silently overwrite or migrate them.
+if [ -z "$CADDYFILE" ]; then
+  for file in .phpup/Caddyfile Caddyfile.local Caddyfile.dev Caddyfile caddy/Caddyfile config/Caddyfile .Caddyfile; do
+    if [ -f "$file" ]; then CADDYFILE="$file"; break; fi
+  done
+fi
+if [ -n "$CADDYFILE" ]; then
+  validate_file_path "$CADDYFILE" true || { err "Caddyfile not found or invalid: $CADDYFILE"; exit 2; }
+  CADDYFILE="$(cd "$(dirname "$CADDYFILE")" && pwd -P)/$(basename "$CADDYFILE")"
+fi
+
+PORT=$(find_free_port "$BIND_HOST" "$START_PORT") || { err "No free port at or above $START_PORT"; exit 1; }
+SERVER_NAME="$SITE_HOST:$PORT"
+SERVER_URL="$PROTOCOL://$SERVER_NAME"
+export HOST PORT DOCROOT PROTOCOL WORKER_FILE PHPUP_DIR PHP_THREADS
+export SERVER_NAME SERVER_ROOT="$DOCROOT" DOCUMENT_ROOT="$DOCROOT" MAX_WAIT_TIME
+RUN_ENV=("${APP_ENV[@]}" "HOST=$SITE_HOST" "PORT=$PORT" "DOCROOT=$DOCROOT" "PROTOCOL=$PROTOCOL" "PHPUP_DIR=$PHPUP_DIR" "WORKER_FILE=$WORKER_FILE" "SERVER_NAME=$SERVER_NAME" "SERVER_ROOT=$DOCROOT" "DOCUMENT_ROOT=$DOCROOT" "PHP_THREADS=$PHP_THREADS" "MAX_WAIT_TIME=$MAX_WAIT_TIME")
+if [ -f "$PHPUP_DIR/php.ini" ]; then
+  PHP_SCAN="${PHP_INI_SCAN_DIR-}"
+  if [ "${PHP_INI_SCAN_DIR+x}" = x ] && [ -z "$PHP_SCAN" ]; then
+    PHP_SCAN="$PHPUP_DIR"
+  else
+    PHP_SCAN="$PHP_SCAN:$PHPUP_DIR"
+  fi
+  RUN_ENV+=("PHP_INI_SCAN_DIR=$PHP_SCAN")
+fi
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo 'DRY-RUN'
+  echo "URL: $SERVER_URL"
+  echo "Docroot: $DOCROOT"
+  echo "PHP threads: $PHP_THREADS"
+  echo "Worker mode: $WORKER_MODE; File watcher: $WATCH_MODE"
+  if [ -n "$CADDYFILE" ]; then
+    echo "Caddyfile: $CADDYFILE (custom; its directives determine actual listeners/options)"
+  else
+    echo 'Caddyfile: generated at launch'
+    [ "$VERBOSE" -ne 1 ] || render_caddyfile "$WORKER_MODE"
+  fi
+  printf 'Command: frankenphp run --config %q\n' "${CADDYFILE:-$PHPUP_DIR/runtime/Caddyfile}"
+  [ "$SAVE_MODE" -ne 1 ] || echo 'Would save .phpup/config'
+  exit 0
+fi
+
+command_exists curl || { err "curl is required to verify server readiness"; exit 127; }
+if [ "$WORKER_MODE" -eq 1 ] && [ ! -f "$WORKER_FILE" ]; then err "Worker script not found: $WORKER_FILE"; exit 2; fi
+mkdir -p "$PHPUP_DIR/runtime" "$PHPUP_DIR/sessions"
+secure_files
+
 cleanup() {
-  local exit_code=${1:-0}
-
-  if [ -n "$FRANKENPHP_PID" ]; then
-    log "⏹️  Shutting down FrankenPHP (PID: $FRANKENPHP_PID)..."
-
-    # Check if process is still running
-    if kill -0 "$FRANKENPHP_PID" 2>/dev/null; then
-      # Send SIGTERM first for graceful shutdown
-      kill -TERM "$FRANKENPHP_PID" 2>/dev/null
-
-      # Wait up to 10 seconds for graceful shutdown
-      local count=0
-      while [ $count -lt 10 ] && kill -0 "$FRANKENPHP_PID" 2>/dev/null; do
-        sleep 1
-        count=$((count + 1))
-      done
-
-      # Force kill if still running
-      if kill -0 "$FRANKENPHP_PID" 2>/dev/null; then
-        log "💥 Force killing FrankenPHP (PID: $FRANKENPHP_PID)..."
-        kill -KILL "$FRANKENPHP_PID" 2>/dev/null
-        sleep 1
-      fi
-    fi
-
-    # Final verification
-    if kill -0 "$FRANKENPHP_PID" 2>/dev/null; then
-      log "⚠️  Warning: FrankenPHP process may still be running (PID: $FRANKENPHP_PID)"
-    else
-      log "✅ FrankenPHP shutdown complete."
-    fi
+  local status=$?
+  trap - EXIT INT TERM HUP
+  [ -z "${TAIL_PID:-}" ] || kill "$TAIL_PID" 2>/dev/null || true
+  if [ -n "$FRANKENPHP_PID" ] && [ -n "$FRANKENPHP_TOKEN" ] && [ "$(process_token "$FRANKENPHP_PID")" = "$FRANKENPHP_TOKEN" ]; then
+    kill -TERM "$FRANKENPHP_PID" 2>/dev/null || true
+    for _ in $(seq 1 50); do
+      [ "$(process_token "$FRANKENPHP_PID")" = "$FRANKENPHP_TOKEN" ] || break
+      sleep 0.1
+    done
+    if [ "$(process_token "$FRANKENPHP_PID")" = "$FRANKENPHP_TOKEN" ]; then kill -KILL "$FRANKENPHP_PID" 2>/dev/null || true; fi
+    wait "$FRANKENPHP_PID" 2>/dev/null || true
   fi
-
-  if [ "$HOSTS_ENTRY_ADDED" -eq 1 ] && [ "$MANAGE_HOSTS" -eq 1 ] && [ -n "$DOMAIN" ]; then
-    if manage_hosts_entry "remove" "$DOMAIN" "127.0.0.1"; then
-      HOSTS_ENTRY_ADDED=0
-    else
-      log "⚠️  Failed to remove $DOMAIN from /etc/hosts"
-    fi
-  fi
-
-  exit "$exit_code"
+  [ -z "$STATE_FILE" ] || rm -f "$STATE_FILE"
+  [ -z "$RUNTIME_TMP" ] || rm -f "$RUNTIME_TMP"
+  if [ "$HOSTS_ENTRY_ADDED" -eq 1 ]; then manage_hosts_entry remove "$DOMAIN" 127.0.0.1 || true; fi
+  exit "$status"
 }
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
-# Enhanced signal handling with better coverage
-trap 'cleanup 130' SIGINT   # Ctrl+C
-trap 'cleanup 143' SIGTERM  # Termination signal
-trap 'cleanup 129' SIGHUP   # Hangup signal
-
-# Validate command before execution
-if [ ${#CMD[@]} -eq 0 ]; then
-  err "Internal error: empty command array"
+if [ -n "$DOMAIN" ]; then
+  if [ "$HTTPS_MODE" = local ]; then
+    check_mkcert || setup_mkcert || { err "Local HTTPS requires mkcert; setup failed"; exit 1; }
+    generate_cert "$DOMAIN" || { err "Certificate generation failed"; exit 1; }
+  fi
+  if [ "$MANAGE_HOSTS" -eq 1 ]; then manage_hosts_entry add "$DOMAIN" 127.0.0.1 || exit 1; fi
+fi
+if [ "$SAVE_MODE" -eq 1 ]; then save_config; fi
+if [ -n "$CADDYFILE" ]; then
+  FINAL_CADDYFILE="$CADDYFILE"
+  log "Using custom Caddyfile: $CADDYFILE (its directives control listeners and options)."
+else
+  RUNTIME_TMP=$(mktemp "$PHPUP_DIR/runtime/Caddyfile.XXXXXX")
+  render_caddyfile "$WORKER_MODE" > "$RUNTIME_TMP"
+  FINAL_CADDYFILE="$RUNTIME_TMP"
+fi
+# Always retain real diagnostics. A failed config never launches a server.
+if ! env "${RUN_ENV[@]}" "$FRANKENPHP_BIN" validate --config "$FINAL_CADDYFILE" --adapter caddyfile > "$PHPUP_DIR/runtime/validation.log" 2>&1; then
+  cat "$PHPUP_DIR/runtime/validation.log" >&2
   exit 1
 fi
-
-# Start FrankenPHP in background to allow signal handling
-log "🚀 Executing: ${CMD[*]}"
-
-# Suppress FrankenPHP output unless debug mode is enabled
-if [ "$VERBOSE" -eq 0 ]; then
-  "${CMD[@]}" >/dev/null 2>&1 &
-else
-  "${CMD[@]}" &
-fi
+SERVER_LOG="$PHPUP_DIR/runtime/server-$$.log"
+log "Starting FrankenPHP at $SERVER_URL"
+env "${RUN_ENV[@]}" "$FRANKENPHP_BIN" run --config "$FINAL_CADDYFILE" --adapter caddyfile "${EXTRA_ARGS[@]}" > "$SERVER_LOG" 2>&1 &
 FRANKENPHP_PID=$!
-
-# Verify process started successfully with retry
-STARTUP_RETRIES=5
-STARTUP_DELAY=0.5
-for i in $(seq 1 $STARTUP_RETRIES); do
-  sleep $STARTUP_DELAY
-  if kill -0 "$FRANKENPHP_PID" 2>/dev/null; then
-    break
+FRANKENPHP_TOKEN=$(process_token "$FRANKENPHP_PID") || true
+# An HTTP response, including an application 4xx/5xx, proves the listener is up.
+# A successful application response is not required to preserve error debugging.
+READY=0
+PROBE_HOST="$BIND_HOST"
+[ "$PROBE_HOST" != 0.0.0.0 ] || PROBE_HOST=127.0.0.1
+for _ in $(seq 1 30); do
+  if ! kill -0 "$FRANKENPHP_PID" 2>/dev/null; then break; fi
+  probe_args=(--silent --noproxy '*' --max-time 1 --output /dev/null)
+  if [ "$SITE_HOST" != '[::1]' ]; then
+    [ "$PROBE_HOST" != ::1 ] || PROBE_HOST='[::1]'
+    probe_args+=(--resolve "$SITE_HOST:$PORT:$PROBE_HOST")
   fi
-  if [ "$i" -eq "$STARTUP_RETRIES" ]; then
-    err "Failed to start FrankenPHP"
-
-    # Try to get error details
-    if [ -f ".phpup/php_errors.log" ]; then
-      err "Recent PHP errors:"
-      tail -5 ".phpup/php_errors.log" 2>/dev/null | while read -r line; do
-        err "  $line"
-      done
-    fi
-
-    exit 1
-  fi
-done
-
-log "🧟 FrankenPHP started with PID: $FRANKENPHP_PID"
-debug "Server should be accessible at: ${PROTOCOL}://$HOST:$PORT"
-
-# Health check with retries (runs always, output only in verbose mode)
-if command_exists curl; then
-  HEALTH_RETRIES=5
-  HEALTH_DELAY=1
-  HEALTH_OK=0
-
-  for i in $(seq 1 $HEALTH_RETRIES); do
-    sleep $HEALTH_DELAY
-    if curl -s -f --connect-timeout 3 "${PROTOCOL}://$HOST:$PORT" >/dev/null 2>&1; then
-      HEALTH_OK=1
-      break
-    fi
-    # Check if process died during health check
-    if ! kill -0 "$FRANKENPHP_PID" 2>/dev/null; then
-      err "FrankenPHP process died unexpectedly"
-      if [ -f ".phpup/php_errors.log" ]; then
-        err "Recent PHP errors:"
-        tail -5 ".phpup/php_errors.log" 2>/dev/null | while read -r line; do
-          err "  $line"
-        done
-      fi
-      exit 1
-    fi
-  done
-
-  if [ "$HEALTH_OK" -eq 1 ]; then
-    debug "✅ Server health check passed"
-  else
-    log "⚠️  Server health check failed after ${HEALTH_RETRIES} attempts - server might not be ready"
-  fi
+  [ "$HTTPS_MODE" != local ] || probe_args+=(--insecure)
+  if curl "${probe_args[@]}" "$SERVER_URL/" && kill -0 "$FRANKENPHP_PID" 2>/dev/null; then READY=1; break; fi
+  sleep 0.1
+ done
+if [ "$READY" -ne 1 ]; then
+  err "Server did not become ready at $SERVER_URL"
+  tail -40 "$SERVER_LOG" >&2
+  exit 1
 fi
-
-# Open browser if requested
-if [ "$OPEN_BROWSER" -eq 1 ]; then
-  open_browser "${PROTOCOL}://$HOST:$PORT"
-fi
-
-# Wait for FrankenPHP and handle signals
-wait $FRANKENPHP_PID
-exit_status=$?
-
-# Clean exit with enhanced error reporting
-if [ $exit_status -ne 0 ]; then
-  case $exit_status in
-    1) log "⚠️  FrankenPHP exited with error (status: $exit_status)" ;;
-    130) log "🛑 FrankenPHP interrupted by user (Ctrl+C)" ;;
-    143) log "🛑 FrankenPHP terminated (SIGTERM)" ;;
-    *) log "⚠️  FrankenPHP exited with status: $exit_status" ;;
-  esac
-
-  # Show recent errors if available
-  if [ -f ".phpup/php_errors.log" ] && [ "$VERBOSE" -eq 1 ]; then
-    if [ -s ".phpup/php_errors.log" ]; then
-      log "Recent PHP errors:"
-      tail -10 ".phpup/php_errors.log" 2>/dev/null | while read -r line; do
-        log "  $line"
-      done
-    fi
+REGISTRY=$(registry_dir)
+if [ -L "$REGISTRY" ]; then err "Invalid runtime registry"; exit 1; fi
+mkdir -p "$REGISTRY"
+[ "$(get_file_owner_uid "$REGISTRY")" = "$(id -u)" ] || { err "Runtime registry has another owner"; exit 1; }
+chmod 700 "$REGISTRY"
+STATE_FILE="$REGISTRY/$$.state"
+state_tmp=$(mktemp "$REGISTRY/.state.XXXXXX")
+printf '%s\n' "$$" "$(process_token $$)" "$PROJECT_PATH" "$PORT" "$SERVER_URL" "$FRANKENPHP_PID" "$(process_token "$FRANKENPHP_PID")" > "$state_tmp"
+mv -f "$state_tmp" "$STATE_FILE"
+# Stable event for the desktop; normal human output remains on stderr.
+printf '[phpup:ready] %s\n' "$SERVER_URL"
+[ "$OPEN_BROWSER" -ne 1 ] || open_browser "$SERVER_URL" || true
+# Stream server diagnostics without leaving a tail process behind.
+TAIL_PID=""
+if [ "$VERBOSE" -eq 1 ]; then
+  # Keep the live view bounded and follow file replacement during log rotation.
+  # Custom PHP error_log destinations remain under the project's control.
+  log_files=("$SERVER_LOG")
+  if [ -f "$PHPUP_DIR/php.ini" ]; then
+    if touch "$PHPUP_DIR/php_errors.log" 2>/dev/null; then log_files+=("$PHPUP_DIR/php_errors.log"); fi
   fi
+  tail -q -n 80 -F "${log_files[@]}" & TAIL_PID=$!
 fi
-
-cleanup $exit_status
+exit_status=0
+wait "$FRANKENPHP_PID" || exit_status=$?
+[ -z "$TAIL_PID" ] || kill "$TAIL_PID" 2>/dev/null || true
+if [ "$exit_status" -ne 0 ]; then tail -40 "$SERVER_LOG" >&2; fi
+FRANKENPHP_PID=""
+exit "$exit_status"

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, computed, onUnmounted } from "vue";
 import type { Project, Group } from "../types";
 import ProjectItem from "./ProjectItem.vue";
 
-defineProps<{
+const props = defineProps<{
   groups: Group[];
   projects: Project[];
   ungroupedProjects: Project[];
@@ -16,6 +16,7 @@ defineProps<{
 const emit = defineEmits<{
   "update:searchQuery": [query: string];
   "update:width": [width: number];
+  resizeEnd: [];
   selectProject: [project: Project];
   startProject: [project: Project];
   stopProject: [project: Project];
@@ -30,6 +31,20 @@ const emit = defineEmits<{
   reorderGroups: [fromId: string, toId: string];
   openTools: [];
 }>();
+
+const searchInput = ref<HTMLInputElement | null>(null);
+const sidebar = ref<HTMLElement | null>(null);
+const searching = computed(() => !!props.searchQuery.trim());
+const matches = computed(() => props.ungroupedProjects.length + [...props.projectsByGroup.values()].reduce((n, projects) => n + projects.length, 0));
+const visibleGroups = computed(() => searching.value ? props.groups.filter(g => props.projectsByGroup.get(g.id)?.length) : props.groups);
+function focusSearch() { searchInput.value?.focus(); searchInput.value?.select(); }
+function focusFirstProject() { sidebar.value?.querySelector<HTMLButtonElement>(".project-name")?.focus(); }
+function selectFirstProject() { const button = sidebar.value?.querySelector<HTMLButtonElement>(".project-name"); button?.click(); button?.focus(); }
+function clearSearch() { emit("update:searchQuery", ""); focusSearch(); }
+defineExpose({ focusSearch });
+onUnmounted(() => { if (isResizing.value) stopResize(); });
+
+function windowWidthLimit() { return window.innerWidth - 380; }
 
 // Resize state
 const isResizing = ref(false);
@@ -46,7 +61,7 @@ function startResize() {
 
 function handleResize(e: MouseEvent) {
   if (!isResizing.value) return;
-  const newWidth = Math.min(maxWidth, Math.max(minWidth, e.clientX));
+  const newWidth = Math.max(minWidth, Math.min(maxWidth, window.innerWidth - 380, e.clientX));
   emit("update:width", newWidth);
 }
 
@@ -56,6 +71,7 @@ function stopResize() {
   document.removeEventListener("mouseup", stopResize);
   document.body.style.cursor = "";
   document.body.style.userSelect = "";
+  emit("resizeEnd");
 }
 
 // Drag state
@@ -156,21 +172,28 @@ function handleRenameGroup(group: Group, newName: string) {
 </script>
 
 <template>
-  <aside class="sidebar" :style="{ width: width + 'px' }">
+  <aside ref="sidebar" class="sidebar" :style="{ width: width + 'px' }">
     <div class="sidebar-header">
       <h2 class="sidebar-title">Projects</h2>
     </div>
-    <div v-if="projects.length > 5" class="sidebar-search">
+    <div class="sidebar-search">
       <div class="search-wrapper">
         <svg class="search-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
           <circle cx="7" cy="7" r="5"/>
           <path d="M11 11l3 3"/>
         </svg>
         <input
-          type="text"
+          ref="searchInput"
+          type="search"
+          aria-label="Find project"
+          aria-keyshortcuts="Control+K Meta+K"
+          title="Find project (Ctrl/⌘ K)"
+          @keydown.down.prevent="focusFirstProject"
+          @keydown.enter.prevent="selectFirstProject"
+          @keydown.esc.prevent="clearSearch"
           :value="searchQuery"
           @input="emit('update:searchQuery', ($event.target as HTMLInputElement).value)"
-          placeholder="Filter projects..."
+          placeholder="Find project…"
           class="search-input"
         >
       </div>
@@ -178,11 +201,16 @@ function handleRenameGroup(group: Group, newName: string) {
 
     <div class="project-list">
       <!-- Groups -->
-      <div v-for="group in groups" :key="group.id" class="group">
+      <div v-for="group in visibleGroups" :key="group.id" class="group">
         <div
           class="group-header"
           :class="{ 'drag-over': dragOverGroupId === group.id }"
           draggable="true"
+          role="button"
+          tabindex="0"
+          :aria-expanded="!group.collapsed || searching"
+          @keydown.enter.self.prevent="emit('toggleGroup', group)"
+          @keydown.space.self.prevent="emit('toggleGroup', group)"
           @click="emit('toggleGroup', group)"
           @dragstart="onGroupDragStart($event, group)"
           @dragend="onDragEnd"
@@ -190,7 +218,7 @@ function handleRenameGroup(group: Group, newName: string) {
           @dragleave="onDragLeave"
           @drop="onGroupDrop($event, group.id)"
         >
-          <svg class="chevron" :class="{ collapsed: group.collapsed }" width="10" height="10" viewBox="0 0 10 10">
+          <svg class="chevron" :class="{ collapsed: group.collapsed && !searching }" width="10" height="10" viewBox="0 0 10 10">
             <path d="M2 3l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5"/>
           </svg>
           <span v-if="editingGroup?.id !== group.id" class="group-name" @dblclick.stop="editingGroup = group">
@@ -207,11 +235,11 @@ function handleRenameGroup(group: Group, newName: string) {
             @click.stop
             autofocus
           >
-          <button class="icon-btn delete-btn" @click.stop="emit('deleteGroup', group)">
+          <button :aria-label="'Delete group ' + group.name" class="icon-btn delete-btn" @click.stop="emit('deleteGroup', group)">
             <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
           </button>
         </div>
-        <div v-if="!group.collapsed" class="group-projects">
+        <div v-if="!group.collapsed || searching" class="group-projects">
           <ProjectItem
             v-for="project in projectsByGroup.get(group.id)"
             :key="project.id"
@@ -249,6 +277,7 @@ function handleRenameGroup(group: Group, newName: string) {
           @select="emit('selectProject', $event)"
           @start="emit('startProject', $event)"
           @stop="emit('stopProject', $event)"
+          @rename="(project, name) => emit('renameProject', project, name)"
           @dragstart="onProjectDragStart"
           @dragend="onDragEnd"
           @dragover="onProjectDragOver"
@@ -261,6 +290,10 @@ function handleRenameGroup(group: Group, newName: string) {
         </div>
       </div>
 
+      <div v-if="searching && matches === 0" class="empty-state" role="status">
+        <p>No matching projects</p>
+        <button class="clear-search" @click="clearSearch">Clear search</button>
+      </div>
       <div v-if="projects.length === 0" class="empty-state">
         <p>No projects</p>
       </div>
@@ -290,6 +323,15 @@ function handleRenameGroup(group: Group, newName: string) {
   <!-- Resize Handle -->
   <div
     class="resize-handle"
+    role="separator"
+    tabindex="0"
+    aria-label="Sidebar width"
+    aria-orientation="vertical"
+    :aria-valuenow="width"
+    :aria-valuemin="minWidth"
+    :aria-valuemax="maxWidth"
+    @keydown.left.prevent="emit('update:width', Math.max(minWidth, width - 20)); emit('resizeEnd')"
+    @keydown.right.prevent="emit('update:width', Math.max(minWidth, Math.min(maxWidth, windowWidthLimit(), width + 20))); emit('resizeEnd')"
     @mousedown="startResize"
     :class="{ resizing: isResizing }"
   ></div>
@@ -298,7 +340,7 @@ function handleRenameGroup(group: Group, newName: string) {
 <style scoped>
 .sidebar {
   min-width: 160px;
-  max-width: 400px;
+  max-width: min(400px, calc(100vw - 380px));
   display: flex;
   flex-direction: column;
   background: var(--glass-bg);
@@ -332,7 +374,7 @@ function handleRenameGroup(group: Group, newName: string) {
 .sidebar-title {
   font-size: 11px;
   font-weight: 600;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -351,7 +393,7 @@ function handleRenameGroup(group: Group, newName: string) {
   left: 8px;
   top: 50%;
   transform: translateY(-50%);
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .search-input {
@@ -405,7 +447,7 @@ function handleRenameGroup(group: Group, newName: string) {
   cursor: pointer;
   border-radius: var(--radius-xs);
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   transition: all 0.1s ease;
@@ -474,7 +516,7 @@ function handleRenameGroup(group: Group, newName: string) {
   padding: 8px 12px;
   text-align: center;
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   border: 1px dashed var(--drop-hint-border);
   border-radius: var(--radius-xs);
   margin: 2px 0;
@@ -483,7 +525,7 @@ function handleRenameGroup(group: Group, newName: string) {
 .empty-state {
   text-align: center;
   padding: 40px 16px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
@@ -496,7 +538,7 @@ function handleRenameGroup(group: Group, newName: string) {
   background: transparent;
   border: none;
   border-radius: var(--radius-xs);
-  color: var(--text-muted);
+  color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -513,4 +555,7 @@ function handleRenameGroup(group: Group, newName: string) {
 .group-header[draggable="true"]:active {
   cursor: grabbing;
 }
+.search-input::placeholder { color: var(--text-secondary); }
+.clear-search { background: transparent; border: 0; color: var(--text); text-decoration: underline; font: inherit; cursor: pointer; padding: 8px; }
+.resize-handle:focus-visible, .group-header:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>

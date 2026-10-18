@@ -21,6 +21,8 @@ function selectFile(file: string) {
   <div class="content-section">
     <div class="section-header">
       <h2>Caddyfiles</h2>
+      <p class="config-note" v-if="selectedFile === 'Caddyfile'">This custom file overrides generated server settings. Restart the server after saving.</p>
+      <p class="config-note" v-else>This is an example file. Normal launches use project settings. To run this file, select it with <code>--caddyfile</code> in the CLI.</p>
     </div>
 
     <!-- File tabs -->
@@ -63,6 +65,13 @@ function selectFile(file: string) {
 
 .section-header {
   margin-bottom: 12px;
+}
+
+.config-note {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .section-header h2 {

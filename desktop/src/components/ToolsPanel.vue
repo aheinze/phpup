@@ -3,128 +3,49 @@ import { ref, onMounted, onUnmounted } from "vue";
 import { Command } from "@tauri-apps/plugin-shell";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
-// Shell escape function to prevent command injection
-function shellEscape(str: string): string {
-  return "'" + str.replace(/'/g, "'\\''") + "'";
-}
+import { getStore } from "../composables/useStore";
+import { shellEscape } from "../lib/projectConfig";
 
-// Validate PID is numeric only
-function isValidPid(pid: string): boolean {
-  return /^\d+$/.test(pid) && parseInt(pid, 10) > 0;
-}
-
-// Validate port is numeric
-function isValidPort(port: string): boolean {
-  const num = parseInt(port, 10);
-  return !isNaN(num) && num > 0 && num <= 65535;
-}
-
-// Process monitoring
-interface RunningProcess {
-  pid: string;
-  port: string;
-  cwd: string;
-  command: string;
-}
-
+const store = getStore();
+interface RunningProcess { pid: string; port: string; cwd: string; command: string; }
 const runningProcesses = ref<RunningProcess[]>([]);
 const loadingProcesses = ref(false);
 let processInterval: ReturnType<typeof setInterval> | null = null;
 
 async function checkRunningProcesses() {
+  if (loadingProcesses.value) return;
   loadingProcesses.value = true;
   try {
-    // Find frankenphp processes (run or php-server)
-    const cmd = Command.create("run-bash", [
-      "-c",
-      `ps aux | grep -E "frankenphp (run|php-server)" | grep -v grep | awk '{print $2}'`
-    ]);
-    const result = await cmd.execute();
-
-    const processes: RunningProcess[] = [];
-    const pids = result.stdout.trim().split("\n").filter(Boolean);
-
-    for (const pid of pids) {
-      // Validate PID is numeric to prevent path traversal
-      if (!isValidPid(pid)) {
-        console.warn("Invalid PID detected:", pid);
-        continue;
-      }
-
-      // Get working directory
-      const cwdCmd = await Command.create("run-bash", [
-        "-c",
-        `readlink -f /proc/${pid}/cwd 2>/dev/null || echo "unknown"`
-      ]).execute();
-      const cwd = cwdCmd.stdout.trim();
-
-      // Get command line
-      const cmdlineCmd = await Command.create("run-bash", [
-        "-c",
-        `cat /proc/${pid}/cmdline 2>/dev/null | tr '\\0' ' ' || echo ""`
-      ]).execute();
-      const cmdline = cmdlineCmd.stdout.trim();
-
-      let port = "unknown";
-
-      // Try to extract port from --listen flag
-      const listenMatch = cmdline.match(/--listen[=\s]+[^:]*:(\d+)/);
-      if (listenMatch && isValidPort(listenMatch[1])) {
-        port = listenMatch[1];
-      } else {
-        // Try to read PORT from process environment
-        const envCmd = await Command.create("run-bash", [
-          "-c",
-          `cat /proc/${pid}/environ 2>/dev/null | tr '\\0' '\\n' | grep "^PORT=" | cut -d= -f2`
-        ]).execute();
-        const envPort = envCmd.stdout.trim();
-        if (envPort && isValidPort(envPort)) {
-          port = envPort;
-        }
-      }
-
-      processes.push({
-        pid,
-        port,
-        cwd,
-        command: cmdline.includes("php-server") ? "frankenphp php-server" : "frankenphp run"
-      });
-    }
-
-    runningProcesses.value = processes;
-  } catch {
-    runningProcesses.value = [];
-  } finally {
-    loadingProcesses.value = false;
-  }
+    const result = await Command.create("run-bash", ["-c", `${shellEscape(store.phpupCommand.value)} --list --json`]).execute();
+    if (result.code !== 0) throw new Error(result.stderr || "Cannot read server status");
+    const instances = JSON.parse(result.stdout);
+    if (!Array.isArray(instances)) throw new Error("Invalid server status response");
+    runningProcesses.value = instances.filter(instance =>
+      typeof instance.pid === "string" && /^\d+$/.test(instance.pid) &&
+      typeof instance.path === "string" && typeof instance.port === "string"
+    ).map(instance => ({ pid: instance.pid, port: instance.port, cwd: instance.path, command: "phpup" }));
+  } catch (error) {
+    console.error("Cannot refresh managed servers:", error);
+  } finally { loadingProcesses.value = false; }
 }
 
 async function killProcess(pid: string) {
-  // Validate PID is numeric to prevent command injection
-  if (!isValidPid(pid)) {
-    console.error("Invalid PID:", pid);
-    return;
-  }
-
-  try {
-    await Command.create("run-bash", ["-c", `kill ${pid}`]).execute();
-    // Wait a moment then refresh
-    setTimeout(checkRunningProcesses, 500);
-  } catch (err) {
-    console.error("Failed to kill process:", err);
-  }
+  const instance = runningProcesses.value.find(item => item.pid === pid);
+  if (!instance) return;
+  await stopManaged(`cd ${shellEscape(instance.cwd)} && ${shellEscape(store.phpupCommand.value)} --stop`);
 }
 
 async function killAllProcesses() {
+  await stopManaged(`${shellEscape(store.phpupCommand.value)} --stop --all`);
+}
+
+async function stopManaged(command: string) {
   try {
-    await Command.create("run-bash", [
-      "-c",
-      `pkill -f "frankenphp (run|php-server)" 2>/dev/null || true`
-    ]).execute();
-    setTimeout(checkRunningProcesses, 500);
-  } catch {
-    // Ignore errors
-  }
+    const result = await Command.create("run-bash", ["-c", command]).execute();
+    if (result.code !== 0) throw new Error(result.stderr || "Stop failed");
+    await checkRunningProcesses();
+    await store.refreshAllStatuses();
+  } catch (error) { store.addNotification(String(error), "error"); }
 }
 
 // FrankenPHP state
@@ -142,7 +63,7 @@ async function loadPhpExtensions() {
   try {
     const cmd = Command.create("run-bash", [
       "-c",
-      `frankenphp php-cli -m 2>/dev/null || php -m 2>/dev/null`,
+      `frankenphp php-cli -r 'echo implode("\\n", get_loaded_extensions());' 2>/dev/null`,
     ]);
     const result = await cmd.execute();
     if (result.code === 0) {
@@ -184,61 +105,31 @@ async function checkFrankenPhp() {
 }
 
 async function installFrankenPhp() {
+  if (installingFrankenphp.value) return;
   installingFrankenphp.value = true;
-  frankenphpOutput.value = [];
-
+  frankenphpOutput.value = ["Downloading the official FrankenPHP installer..."];
   try {
-    // Download installer to temp file first (safer than piping to sh)
-    frankenphpOutput.value.push("Downloading FrankenPHP installer...");
-
-    const downloadCmd = Command.create("run-bash", [
-      "-c",
-      "curl -fsSL https://frankenphp.dev/install.sh -o /tmp/frankenphp-install.sh"
-    ]);
-
-    const downloadResult = await downloadCmd.execute();
-    if (downloadResult.code !== 0) {
-      frankenphpOutput.value.push("✗ Failed to download installer");
-      return;
-    }
-
-    frankenphpOutput.value.push("Running installer...");
-
-    const cmd = Command.create("run-bash", [
-      "-c",
-      "chmod +x /tmp/frankenphp-install.sh && sh /tmp/frankenphp-install.sh && rm -f /tmp/frankenphp-install.sh"
-    ]);
-
-    cmd.stdout.on("data", (line: string) => {
-      frankenphpOutput.value.push(line);
-    });
-
-    cmd.stderr.on("data", (line: string) => {
-      frankenphpOutput.value.push(line);
-    });
-
-    const result = await cmd.execute();
-
-    // Cleanup installer
-    await Command.create("run-bash", ["-c", "rm -f /tmp/frankenphp-install.sh"]).execute();
-
-    if (result.code === 0) {
-      // Verify the binary works
-      const verifyCmd = await Command.create("run-bash", ["-c", "frankenphp version 2>&1"]).execute();
-      if (verifyCmd.code === 0) {
-        frankenphpOutput.value.push("✓ FrankenPHP installed and verified successfully!");
-      } else {
-        frankenphpOutput.value.push("✓ FrankenPHP installed (verification pending)");
-      }
-      await checkFrankenPhp();
-    } else {
-      frankenphpOutput.value.push("✗ Installation failed. You may need to run with sudo.");
-    }
-  } catch (err) {
-    frankenphpOutput.value.push(`Error: ${err}`);
-  } finally {
-    installingFrankenphp.value = false;
-  }
+    const command = Command.create("run-bash", ["-c", `set -eu
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+curl -fsSL --connect-timeout 15 --max-time 180 https://frankenphp.dev/install.sh -o "$work/install.sh"
+export BIN_DIR="$HOME/.local/bin"
+mkdir -p "$BIN_DIR"
+cd "$work"
+sh ./install.sh
+if command -v frankenphp >/dev/null 2>&1; then
+  frankenphp version
+else
+  echo 'FrankenPHP is not available in the desktop PATH. Add ~/.local/bin to PATH and restart the desktop.' >&2
+  exit 1
+fi`]);
+    command.stdout.on("data", (line: string) => frankenphpOutput.value.push(line));
+    command.stderr.on("data", (line: string) => frankenphpOutput.value.push(line));
+    const result = await command.execute();
+    frankenphpOutput.value.push(result.code === 0 ? "✓ FrankenPHP installed and verified." : "✗ Installation or verification failed. If system authentication is needed, run phpup --install from a terminal with administrator privileges.");
+    await checkFrankenPhp();
+  } catch (error) { frankenphpOutput.value.push(`Error: ${error}`); }
+  finally { installingFrankenphp.value = false; }
 }
 
 // Composer paths
@@ -287,93 +178,35 @@ async function checkComposer() {
 }
 
 async function installComposer() {
+  if (installingComposer.value) return;
   installingComposer.value = true;
   composerOutput.value = [];
-
   try {
-    // Check if FrankenPHP is available
-    if (!frankenphpInstalled.value) {
-      composerOutput.value.push("✗ FrankenPHP is required to install Composer. Please install FrankenPHP first.");
-      return;
-    }
-
+    if (!frankenphpInstalled.value) throw new Error("Install FrankenPHP before Composer.");
     const composerPath = await getComposerPath();
     const composerDir = composerPath.substring(0, composerPath.lastIndexOf("/"));
-    const escapedDir = shellEscape(composerDir);
-
-    // Create ~/.local/bin if it doesn't exist
-    composerOutput.value.push("Setting up local bin directory...");
-    await Command.create("run-bash", ["-c", `mkdir -p ${escapedDir}`]).execute();
-
-    // Download composer installer
-    composerOutput.value.push("Downloading Composer installer...");
-
-    const downloadCmd = Command.create("run-bash", [
-      "-c",
-      "curl -sS https://getcomposer.org/installer -o /tmp/composer-setup.php"
-    ]);
-
-    downloadCmd.stderr.on("data", (line: string) => {
-      composerOutput.value.push(line);
-    });
-
-    const downloadResult = await downloadCmd.execute();
-
-    if (downloadResult.code !== 0) {
-      composerOutput.value.push("✗ Failed to download Composer installer");
-      return;
-    }
-
-    // Verify the installer with checksum
-    composerOutput.value.push("Verifying installer checksum...");
-
-    const verifyCmd = await Command.create("run-bash", [
-      "-c",
-      `EXPECTED_CHECKSUM="$(curl -sS https://composer.github.io/installer.sig)" && ` +
-      `ACTUAL_CHECKSUM="$(frankenphp php-cli -r "echo hash_file('sha384', '/tmp/composer-setup.php');")" && ` +
-      `if [ "$EXPECTED_CHECKSUM" = "$ACTUAL_CHECKSUM" ]; then echo "verified"; else echo "failed"; fi`
-    ]).execute();
-
-    if (verifyCmd.stdout.trim() !== "verified") {
-      composerOutput.value.push("✗ Installer checksum verification failed. Aborting for security.");
-      await Command.create("run-bash", ["-c", "rm -f /tmp/composer-setup.php"]).execute();
-      return;
-    }
-
-    composerOutput.value.push("✓ Checksum verified");
-
-    // Run installer with FrankenPHP
-    composerOutput.value.push("Installing Composer using FrankenPHP...");
-
-    const installCmd = Command.create("run-bash", [
-      "-c",
-      `frankenphp php-cli /tmp/composer-setup.php --install-dir=${escapedDir} --filename=composer.phar 2>&1`
-    ]);
-
-    installCmd.stdout.on("data", (line: string) => {
-      composerOutput.value.push(line);
-    });
-
-    installCmd.stderr.on("data", (line: string) => {
-      composerOutput.value.push(line);
-    });
-
-    const installResult = await installCmd.execute();
-
-    // Cleanup installer
-    await Command.create("run-bash", ["-c", "rm -f /tmp/composer-setup.php"]).execute();
-
-    if (installResult.code === 0) {
-      composerOutput.value.push(`✓ Composer installed to ${composerPath}`);
-      await checkComposer();
-    } else {
-      composerOutput.value.push("✗ Installation failed.");
-    }
-  } catch (err) {
-    composerOutput.value.push(`Error: ${err}`);
-  } finally {
-    installingComposer.value = false;
-  }
+    composerOutput.value.push("Downloading and verifying the Composer installer...");
+    const command = Command.create("run-bash", ["-c", `set -eu
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+cd "$work"
+curl -fsSL --connect-timeout 15 --max-time 180 https://getcomposer.org/installer -o installer.php
+expected=$(curl -fsSL --connect-timeout 15 --max-time 30 https://composer.github.io/installer.sig)
+actual=$(frankenphp php-cli -r 'echo hash_file("sha384", "installer.php");')
+if [[ ! "$expected" =~ ^[a-fA-F0-9]{96}$ ]] || [ "$expected" != "$actual" ]; then
+  echo 'Composer installer checksum verification failed.' >&2
+  exit 1
+fi
+mkdir -p ${shellEscape(composerDir)}
+frankenphp php-cli installer.php --install-dir=${shellEscape(composerDir)} --filename=composer.phar
+frankenphp php-cli ${shellEscape(composerPath)} --version`]);
+    command.stdout.on("data", (line: string) => composerOutput.value.push(line));
+    command.stderr.on("data", (line: string) => composerOutput.value.push(line));
+    const result = await command.execute();
+    composerOutput.value.push(result.code === 0 ? `✓ Composer installed and verified at ${composerPath}` : "✗ Composer installation failed. See the output above.");
+    await checkComposer();
+  } catch (error) { composerOutput.value.push(`Error: ${error}`); }
+  finally { installingComposer.value = false; }
 }
 
 async function refreshAll() {
@@ -525,7 +358,7 @@ onUnmounted(() => {
     <!-- Running Processes Monitor -->
     <div class="monitor-section">
       <div class="section-header">
-        <h3>Running Servers</h3>
+        <h3>Servers managed by phpup</h3>
         <div class="header-actions">
           <button
             v-if="runningProcesses.length > 0"

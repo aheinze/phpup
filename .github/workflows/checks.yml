@@ -1,0 +1,66 @@
+name: Checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - name: Install pinned FrankenPHP test runtime
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/phpup-bin"
+          cd "$RUNNER_TEMP/phpup-bin"
+          curl -fSL --retry 3 https://github.com/php/frankenphp/releases/download/v1.13.0/frankenphp-linux-x86_64 -o frankenphp
+          echo '81d64e0e89a856e10cf6522ad09a61e1d71f0873877d9b6920f3754267f96040  frankenphp' | sha256sum --check --strict
+          chmod +x frankenphp
+          ./frankenphp version
+          echo "$RUNNER_TEMP/phpup-bin" >> "$GITHUB_PATH"
+      - name: Install pinned mkcert test tool
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/phpup-bin"
+          curl -fSL --retry 3 https://github.com/FiloSottile/mkcert/releases/download/v1.4.4/mkcert-v1.4.4-linux-amd64 -o mkcert
+          echo '6d31c65b03972c6dc4a14ab429f2928300518b26503f58723e532d1b0a3bbb52  mkcert' | sha256sum --check --strict
+          chmod +x mkcert
+      - name: CLI checks
+        run: |
+          bash -n phpup
+          ./tests/run_tests.sh
+          python3 tests/test_runtime.py
+          python3 tests/test_doctor.py
+          python3 tests/test_hosts.py
+      - name: Desktop regressions and frontend build
+        working-directory: desktop
+        run: |
+          bun install --frozen-lockfile
+          bun test
+          bun run build
+      - name: Native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev webkit2gtk-driver xvfb
+      - name: Native build and WebKit regression tests
+        run: |
+          cargo install tauri-driver --version 2.1.0 --locked
+          cd desktop
+          bun run tauri build --debug --no-bundle --ci
+          cd ..
+          PHPUP_TEST_ARTIFACT_DIR="$RUNNER_TEMP/phpup-screenshots" python3 tests/test_desktop.py
+      - name: Native screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-screenshots
+          path: ${{ runner.temp }}/phpup-screenshots
+          if-no-files-found: ignore

@@ -34,9 +34,13 @@ setup_test_env() {
     cd "$TEST_TMPDIR"
     export PHPUP
     export TEST_TMPDIR
+    export XDG_RUNTIME_DIR="$TEST_TMPDIR"
+    export XDG_CONFIG_HOME="$TEST_TMPDIR/xdg-config"
+    export XDG_DATA_HOME="$TEST_TMPDIR/xdg-data"
 }
 
 cleanup_test_env() {
+    cd "$PROJECT_ROOT"
     if [ -n "$TEST_TMPDIR" ] && [ -d "$TEST_TMPDIR" ]; then
         rm -rf "$TEST_TMPDIR"
     fi
@@ -197,9 +201,10 @@ main() {
         # Run specific test files
         for test_file in "$@"; do
             if [ -f "$test_file" ]; then
-                run_test_file "$test_file"
+                run_test_file "$(cd "$(dirname "$test_file")" && pwd)/$(basename "$test_file")"
             else
                 printf "${RED}Test file not found: %s${NC}\n" "$test_file"
+                exit 1
             fi
         done
     else
@@ -214,4 +219,5 @@ main() {
     print_summary
 }
 
+trap cleanup_test_env EXIT
 main "$@"

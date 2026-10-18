@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "bun test tests",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "NO_STRIP=1 tauri"

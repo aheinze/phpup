@@ -8,7 +8,8 @@
 test_start "detects public directory as docroot"
 rm -rf public web www
 mkdir -p public
-output=$("$PHPUP" --dry-run 2>&1) || true
+status=0
+output=$("$PHPUP" --dry-run 2>&1) || status=$?
 if assert_contains "$output" "public"; then
     test_pass
 else
@@ -19,7 +20,8 @@ rm -rf public
 test_start "detects web directory as docroot"
 rm -rf public web www
 mkdir -p web
-output=$("$PHPUP" --dry-run 2>&1) || true
+status=0
+output=$("$PHPUP" --dry-run 2>&1) || status=$?
 if assert_contains "$output" "web"; then
     test_pass
 else
@@ -30,7 +32,8 @@ rm -rf web
 test_start "detects www directory as docroot"
 rm -rf public web www
 mkdir -p www
-output=$("$PHPUP" --dry-run 2>&1) || true
+status=0
+output=$("$PHPUP" --dry-run 2>&1) || status=$?
 if assert_contains "$output" "www"; then
     test_pass
 else
@@ -41,7 +44,8 @@ rm -rf www
 test_start "prefers public over web"
 rm -rf public web
 mkdir -p public web
-output=$("$PHPUP" --dry-run 2>&1) || true
+status=0
+output=$("$PHPUP" --dry-run 2>&1) || status=$?
 if assert_contains "$output" "public"; then
     test_pass
 else
@@ -52,9 +56,10 @@ rm -rf public web
 test_start "falls back to current directory with index.php"
 rm -rf public web www
 echo '<?php echo "test";' > index.php
-output=$("$PHPUP" --dry-run 2>&1) || true
+status=0
+output=$("$PHPUP" --dry-run 2>&1) || status=$?
 # Should use current directory
-if [[ $? -eq 0 ]]; then
+if [[ $status -eq 0 ]]; then
     test_pass
 else
     test_fail "Should use current directory with index.php"
@@ -68,7 +73,8 @@ rm -f index.php
 test_start "explicit docroot overrides auto-detection"
 rm -rf public customroot
 mkdir -p public customroot
-output=$("$PHPUP" --docroot customroot --dry-run 2>&1) || true
+status=0
+output=$("$PHPUP" --docroot customroot --dry-run 2>&1) || status=$?
 if assert_contains "$output" "customroot"; then
     test_pass
 else
@@ -77,20 +83,22 @@ fi
 rm -rf public customroot
 
 test_start "absolute path docroot is accepted"
-rm -rf /tmp/phpup-test-docroot
-mkdir -p /tmp/phpup-test-docroot
-output=$("$PHPUP" --docroot /tmp/phpup-test-docroot --dry-run 2>&1) || true
-if assert_contains "$output" "/tmp/phpup-test-docroot"; then
+rm -rf "$TEST_TMPDIR/absolute-docroot"
+mkdir -p "$TEST_TMPDIR/absolute-docroot"
+status=0
+output=$("$PHPUP" --docroot "$TEST_TMPDIR/absolute-docroot" --dry-run 2>&1) || status=$?
+if assert_contains "$output" "$TEST_TMPDIR/absolute-docroot"; then
     test_pass
 else
     test_fail "Should accept absolute path"
 fi
-rm -rf /tmp/phpup-test-docroot
+rm -rf "$TEST_TMPDIR/absolute-docroot"
 
 test_start "relative docroot is converted to absolute"
 rm -rf relroot
 mkdir -p relroot
-output=$("$PHPUP" --docroot relroot --dry-run 2>&1) || true
+status=0
+output=$("$PHPUP" --docroot relroot --dry-run 2>&1) || status=$?
 # Should appear as absolute path in output
 if assert_contains "$output" "relroot"; then
     test_pass
@@ -104,11 +112,12 @@ rm -rf relroot
 #
 
 test_start "non-existent docroot shows error or warning"
-output=$("$PHPUP" --docroot /nonexistent/path/xyz --dry-run 2>&1) || true
+status=0
+output=$("$PHPUP" --docroot /nonexistent/path/xyz --dry-run 2>&1) || status=$?
 # Should warn or error about missing directory
 if assert_contains "$output" "error" || assert_contains "$output" "Error" || \
    assert_contains "$output" "not found" || assert_contains "$output" "not exist" || \
-   [[ $? -ne 0 ]]; then
+   [[ $status -ne 0 ]]; then
     test_pass
 else
     test_fail "Should warn about non-existent docroot"
@@ -124,7 +133,8 @@ mkdir -p .phpup configdoc
 cat > .phpup/config <<EOF
 DOCROOT=configdoc
 EOF
-output=$("$PHPUP" --dry-run 2>&1) || true
+status=0
+output=$("$PHPUP" --dry-run 2>&1) || status=$?
 if assert_contains "$output" "configdoc"; then
     test_pass
 else

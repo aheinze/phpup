@@ -3,7 +3,11 @@ import { ref, computed, watch } from "vue";
 import { Command } from "@tauri-apps/plugin-shell";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { Project, ProjectSettings } from "../types";
+import { shellEscape } from "../lib/projectConfig";
 import ConsoleOutput from "./ConsoleOutput.vue";
+import DoctorPanel from "./DoctorPanel.vue";
+import type { DoctorReport } from "../lib/doctor";
+import { getStore } from "../composables/useStore";
 
 const props = defineProps<{
   project: Project;
@@ -19,26 +23,24 @@ const emit = defineEmits<{
   openIde: [];
 }>();
 
-const serverUrl = computed(() => {
-  const protocol = props.settings.httpsMode !== "off" ? "https" : "http";
-  const hostname = props.settings.domain || `${props.settings.host}:${props.project.port}`;
-  return `${protocol}://${hostname}`;
-});
+const serverUrl = computed(() => props.project.url || "");
+const store = getStore();
 const urlCopied = ref(false);
 
 async function copyUrl() {
+  const path = props.project.path;
+  if (props.project.status !== "running" || !serverUrl.value) return;
   try {
     await writeText(serverUrl.value);
-  } catch {
-    await navigator.clipboard.writeText(serverUrl.value);
-  }
-  urlCopied.value = true;
-  setTimeout(() => { urlCopied.value = false; }, 1500);
+    if (props.project.path === path) urlCopied.value = true;
+  } catch { store.addNotification("Could not copy the URL. Select the address to copy it manually.", "error"); }
 }
+watch(() => props.project.url, () => { urlCopied.value = false; });
 
 const statusLabels: Record<string, string> = {
   stopped: "Stopped",
   starting: "Starting...",
+  stopping: "Stopping...",
   running: "Running",
   crashed: "Crashed",
 };
@@ -46,17 +48,10 @@ const statusLabels: Record<string, string> = {
 const statusClasses: Record<string, string> = {
   stopped: "",
   starting: "starting",
+  stopping: "starting",
   running: "running",
   crashed: "crashed",
 };
-
-interface HealthCheck {
-  name: string;
-  status: "ok" | "warning" | "missing";
-  message: string;
-}
-
-const healthChecks = ref<HealthCheck[]>([]);
 
 // Composer state
 const hasComposer = ref(false);
@@ -65,80 +60,11 @@ const composerAvailable = ref(false);
 const runningComposer = ref(false);
 const composerOutput = ref<string[]>([]);
 
-async function runHealthChecks() {
-  const checks: HealthCheck[] = [];
-  const projectPath = props.project.path;
-
-  // Check for composer.json
-  const composerCheck = await Command.create("run-bash", [
-    "-c",
-    `test -f "${projectPath}/composer.json" && echo "exists"`
-  ]).execute();
-
-  hasComposer.value = composerCheck.stdout.trim() === "exists";
-
-  if (hasComposer.value) {
-    const composerInstalled = await Command.create("run-bash", [
-      "-c",
-      "command -v composer"
-    ]).execute();
-
-    composerAvailable.value = composerInstalled.code === 0;
-
-    if (composerAvailable.value) {
-      // Get vendor directory from composer.json (default: vendor)
-      const vendorDirResult = await Command.create("run-bash", [
-        "-c",
-        `cat "${projectPath}/composer.json" | grep -o '"vendor-dir"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\\([^"]*\\)"$/\\1/' | head -1`
-      ]).execute();
-
-      const vendorDir = vendorDirResult.stdout.trim() || "vendor";
-
-      const vendorCheck = await Command.create("run-bash", [
-        "-c",
-        `test -d "${projectPath}/${vendorDir}" && echo "exists"`
-      ]).execute();
-
-      hasVendor.value = vendorCheck.stdout.trim() === "exists";
-
-      if (!hasVendor.value) {
-        checks.push({
-          name: "Composer",
-          status: "warning",
-          message: "Run 'composer install' to install dependencies"
-        });
-      }
-    } else {
-      checks.push({
-        name: "Composer",
-        status: "missing",
-        message: "Composer not installed"
-      });
-    }
-  }
-
-  // Check for package.json
-  const packageCheck = await Command.create("run-bash", [
-    "-c",
-    `test -f "${projectPath}/package.json" && echo "exists"`
-  ]).execute();
-
-  if (packageCheck.stdout.trim() === "exists") {
-    const nodeModulesCheck = await Command.create("run-bash", [
-      "-c",
-      `test -d "${projectPath}/node_modules" && echo "exists"`
-    ]).execute();
-
-    if (nodeModulesCheck.stdout.trim() !== "exists") {
-      checks.push({
-        name: "Node.js",
-        status: "warning",
-        message: "Run 'npm install' to install dependencies"
-      });
-    }
-  }
-
-  healthChecks.value = checks;
+const doctorRevision = ref(0);
+function updateDiagnostics(report: DoctorReport | null) {
+  hasComposer.value = !!report?.checks.some(c => c.id === "composer.manifest" && c.status === "pass");
+  hasVendor.value = !!report?.checks.some(c => c.id === "composer.vendor" && c.status === "pass");
+  composerAvailable.value = !!report?.checks.some(c => c.id === "composer" && c.status === "pass");
 }
 
 async function getComposerCommand(): Promise<string> {
@@ -153,9 +79,9 @@ async function getComposerCommand(): Promise<string> {
 
   if (hasFrankenphp) {
     // Check for local composer.phar
-    const localCheck = await Command.create("run-bash", ["-c", `test -f "${localComposer}" && echo "exists"`]).execute();
+    const localCheck = await Command.create("run-bash", ["-c", `test -f ${shellEscape(localComposer)} && echo "exists"`]).execute();
     if (localCheck.stdout.trim() === "exists") {
-      return `frankenphp php-cli "${localComposer}"`;
+      return `frankenphp php-cli ${shellEscape(localComposer)}`;
     }
   }
 
@@ -172,7 +98,7 @@ async function runComposerCommand(command: string) {
 
     const cmd = Command.create("run-bash", [
       "-c",
-      `cd "${props.project.path}" && ${composerCmd} ${command} 2>&1`
+      `cd ${shellEscape(props.project.path)} && ${composerCmd} ${command} 2>&1`
     ]);
 
     cmd.stdout.on("data", (line: string) => {
@@ -187,7 +113,7 @@ async function runComposerCommand(command: string) {
 
     if (result.code === 0) {
       composerOutput.value.push("✓ Done");
-      await runHealthChecks();
+      doctorRevision.value++;
     } else {
       composerOutput.value.push("✗ Command failed");
     }
@@ -200,7 +126,7 @@ async function runComposerCommand(command: string) {
 
 watch(() => props.project.path, () => {
   composerOutput.value = [];
-  runHealthChecks();
+  updateDiagnostics(null);
 }, { immediate: true });
 </script>
 
@@ -220,10 +146,10 @@ watch(() => props.project.path, () => {
         <span class="info-value">{{ project.port }}</span>
       </div>
       <div class="info-row">
-        <span class="info-label">Path</span>
+        <span class="info-label">Document root</span>
         <span class="info-value mono">{{ project.docroot }}</span>
       </div>
-      <div v-if="project.status === 'running' || project.status === 'starting'" class="info-row">
+      <div v-if="project.status === 'running' && serverUrl" class="info-row">
         <span class="info-label">URL</span>
         <span class="info-value mono url-cell">
           <a
@@ -245,8 +171,9 @@ watch(() => props.project.path, () => {
     </div>
 
     <!-- Quick Actions -->
-    <div v-if="detectedIde" class="quick-actions">
-      <button class="btn-outline btn-small" @click="emit('openIde')">
+    <div v-if="detectedIde || project.status === 'running'" class="quick-actions">
+      <button v-if="project.status === 'running' && serverUrl" class="btn-outline btn-small" @click="emit('openBrowser')">Open in browser</button>
+      <button v-if="detectedIde" class="btn-outline btn-small" @click="emit('openIde')">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M6 1H2.5a1.5 1.5 0 00-1.5 1.5v9A1.5 1.5 0 002.5 13h9a1.5 1.5 0 001.5-1.5V8"/>
           <path d="M8 1h5v5"/>
@@ -256,28 +183,9 @@ watch(() => props.project.path, () => {
       </button>
     </div>
 
-    <!-- Health Checks -->
-    <div v-if="healthChecks.length > 0" class="health-checks">
-      <div
-        v-for="check in healthChecks"
-        :key="check.name"
-        class="health-check-item"
-        :class="check.status"
-      >
-        <svg v-if="check.status === 'warning'" class="check-icon" width="14" height="14" viewBox="0 0 14 14" fill="none">
-          <path d="M7 1L1 13h12L7 1z" stroke="currentColor" stroke-width="1.5" fill="none"/>
-          <path d="M7 5v3M7 10v1" stroke="currentColor" stroke-width="1.5"/>
-        </svg>
-        <svg v-else-if="check.status === 'missing'" class="check-icon" width="14" height="14" viewBox="0 0 14 14" fill="none">
-          <circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.5"/>
-          <path d="M4 4l6 6M10 4l-6 6" stroke="currentColor" stroke-width="1.5"/>
-        </svg>
-        <div class="check-content">
-          <span class="check-name">{{ check.name }}</span>
-          <span class="check-message">{{ check.message }}</span>
-        </div>
-      </div>
-    </div>
+    <ConsoleOutput :key="project.id" :output="output" @clear="emit('clearOutput')" />
+
+    <DoctorPanel :path="project.path" :revision="doctorRevision" @report="updateDiagnostics" />
 
     <!-- Composer Section -->
     <div v-if="hasComposer && composerAvailable" class="composer-section">
@@ -327,7 +235,6 @@ watch(() => props.project.path, () => {
       </div>
     </div>
 
-    <ConsoleOutput :output="output" @clear="emit('clearOutput')" />
   </div>
 </template>
 
@@ -357,13 +264,17 @@ watch(() => props.project.path, () => {
 }
 
 .info-label {
-  width: 100px;
-  color: var(--text-muted);
+  width: 96px;
+  margin-right: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
   flex-shrink: 0;
 }
 
 .info-value {
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .info-value.mono {
@@ -445,52 +356,6 @@ watch(() => props.project.path, () => {
   margin-top: 12px;
   display: flex;
   gap: 8px;
-}
-
-.health-checks {
-  margin-top: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.health-check-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 10px 12px;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-}
-
-.health-check-item.warning {
-  background: var(--warning-light);
-  color: var(--warning);
-}
-
-.health-check-item.missing {
-  background: var(--danger-light);
-  color: var(--danger);
-}
-
-.check-icon {
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-
-.check-content {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.check-name {
-  font-weight: 500;
-}
-
-.check-message {
-  font-size: 11px;
-  opacity: 0.85;
 }
 
 .composer-section {
@@ -615,4 +480,6 @@ watch(() => props.project.path, () => {
   white-space: pre-wrap;
   word-break: break-all;
 }
+.url-cell { min-width: 0; align-items: flex-start; }
+.url-link { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 </style>

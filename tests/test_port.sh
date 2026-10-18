@@ -6,7 +6,8 @@
 #
 
 test_start "default port is 8000"
-output=$("$PHPUP" --dry-run 2>&1) || true
+status=0
+output=$("$PHPUP" --dry-run 2>&1) || status=$?
 if assert_contains "$output" "8000"; then
     test_pass
 else
@@ -14,7 +15,8 @@ else
 fi
 
 test_start "custom port is used"
-output=$("$PHPUP" --port 9000 --dry-run 2>&1) || true
+status=0
+output=$("$PHPUP" --port 9000 --dry-run 2>&1) || status=$?
 if assert_contains "$output" "9000"; then
     test_pass
 else
@@ -22,7 +24,8 @@ else
 fi
 
 test_start "PORT env var is respected"
-output=$(PORT=7000 "$PHPUP" --dry-run 2>&1) || true
+status=0
+output=$(PORT=7000 "$PHPUP" --dry-run 2>&1) || status=$?
 if assert_contains "$output" "7000"; then
     test_pass
 else
@@ -30,7 +33,8 @@ else
 fi
 
 test_start "command line overrides PORT env var"
-output=$(PORT=7000 "$PHPUP" --port 9000 --dry-run 2>&1) || true
+status=0
+output=$(PORT=7000 "$PHPUP" --port 9000 --dry-run 2>&1) || status=$?
 if assert_contains "$output" "9000"; then
     test_pass
 else
@@ -47,7 +51,8 @@ mkdir -p .phpup
 cat > .phpup/config <<EOF
 PORT=5000
 EOF
-output=$("$PHPUP" --dry-run 2>&1) || true
+status=0
+output=$("$PHPUP" --dry-run 2>&1) || status=$?
 if assert_contains "$output" "5000"; then
     test_pass
 else
@@ -61,7 +66,8 @@ mkdir -p .phpup
 cat > .phpup/config <<EOF
 PORT=5000
 EOF
-output=$("$PHPUP" --port 6000 --dry-run 2>&1) || true
+status=0
+output=$("$PHPUP" --port 6000 --dry-run 2>&1) || status=$?
 if assert_contains "$output" "6000"; then
     test_pass
 else
@@ -74,16 +80,18 @@ rm -rf .phpup
 #
 
 test_start "numeric port is accepted"
-output=$("$PHPUP" --port 8080 --dry-run 2>&1) || true
-if [[ $? -eq 0 ]]; then
+status=0
+output=$("$PHPUP" --port 8080 --dry-run 2>&1) || status=$?
+if [[ $status -eq 0 ]]; then
     test_pass
 else
     test_fail "Numeric port should be accepted"
 fi
 
 test_start "high port number is accepted"
-output=$("$PHPUP" --port 65000 --dry-run 2>&1) || true
-if [[ $? -eq 0 ]]; then
+status=0
+output=$("$PHPUP" --port 65000 --dry-run 2>&1) || status=$?
+if [[ $status -eq 0 ]]; then
     test_pass
 else
     test_fail "High port should be accepted"
@@ -94,7 +102,8 @@ fi
 #
 
 test_start "host and port are combined correctly"
-output=$("$PHPUP" --host 0.0.0.0 --port 3000 --dry-run 2>&1) || true
+status=0
+output=$("$PHPUP" --host 0.0.0.0 --port 3000 --dry-run 2>&1) || status=$?
 if assert_contains "$output" "0.0.0.0" && assert_contains "$output" "3000"; then
     test_pass
 else
@@ -102,7 +111,8 @@ else
 fi
 
 test_start "localhost works as host"
-output=$("$PHPUP" --host localhost --port 8080 --dry-run 2>&1) || true
+status=0
+output=$("$PHPUP" --host localhost --port 8080 --dry-run 2>&1) || status=$?
 if assert_contains "$output" "localhost" || assert_contains "$output" "8080"; then
     test_pass
 else
@@ -114,7 +124,8 @@ fi
 #
 
 test_start "https mode with custom port"
-output=$("$PHPUP" --https local --port 8443 --dry-run 2>&1) || true
+status=0
+output=$("$PHPUP" --https local --port 8443 --dry-run 2>&1) || status=$?
 if assert_contains "$output" "8443"; then
     test_pass
 else
